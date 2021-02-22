@@ -559,29 +559,28 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
             with open(puzzle_file, 'r', encoding='utf-8') as pf:
                 level_code = pf.read()
-                single_line_level_code = level_code.replace('\r', '').replace('\n', '')
 
-                # Discord's embeds seem to be the only way to do a hyperlink to hide the giant puzzle preview link
-                announcement = discord.Embed(
-                    #author=tournament_name # TODO
-                    title=f"Announcing round {round['round_name']}, {puzzle_name}!",
-                    #description=flavour_text, # TODO
-                )
-                announcement.add_field(name='Preview',
-                                       value=f"[Coranac Viewer]({CORANAC_SITE}?code={single_line_level_code})",
-                                       inline=True)
-                announcement.add_field(name='Metric', value=round['metric'], inline=True)
-                round_end = round['end'] + ' UTC' if 'end' in round else "Tournament Close"
-                announcement.add_field(name='Deadline', value=round_end, inline=True)
-                # TODO: Add @tournament or something that notifies people who opt-in, preferably updateable by bot
+            single_line_level_code = level_code.replace('\r', '').replace('\n', '')
 
-                pf.seek(0)  # Reset file cursor
+            # Discord's embeds seem to be the only way to do a hyperlink to hide the giant puzzle preview link
+            announcement = discord.Embed(
+                #author=tournament_name # TODO
+                title=f"Announcing round {round['round_name']}, {puzzle_name}!",
+                #description=flavour_text, # TODO
+            )
+            announcement.add_field(name='Preview',
+                                   value=f"[Coranac Viewer]({CORANAC_SITE}?code={single_line_level_code})",
+                                   inline=True)
+            announcement.add_field(name='Metric', value=round['metric'], inline=True)
+            round_end = round['end'] + ' UTC' if 'end' in round else "Tournament Close"
+            announcement.add_field(name='Deadline', value=round_end, inline=True)
+            # TODO: Add @tournament or something that notifies people who opt-in, preferably updateable by bot
 
-                # Call synchronously to ensure no other coroutine can read/write tournament data (else we might overwrite
-                # them)
-                # TODO: Might be worth using an async lock for the tournament metadata file so the below can be async with
-                #       any bot coroutines that aren't accessing the tournament metadata (same for announce_results)
-                msg = channel.send(embed=announcement)  # TODO: Why is this broken?: , file=discord.File(pf))
+            # Call synchronously to ensure no other coroutine can read/write tournament data (else we might overwrite
+            # them)
+            # TODO: Might be worth using an async lock for the tournament metadata file so the below can be async with
+            #       any bot coroutines that aren't accessing the tournament metadata (same for announce_results)
+            msg = channel.send(embed=announcement, file=discord.File(str(puzzle_file), filename=puzzle_file.name))
 
             # Keep the link to the original announcement post for !tournament-info. We can also check this to know whether
             # we've already done an announcement post
@@ -636,27 +635,28 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
             # TODO Modify standings.csv
 
-            with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as sf:
-                _results_str = results_str(sf.read(), level_code, round['metric'],
-                                           puzzle_points=round['total_points'])
-                # Embed doesn't seem to be wide enough for tables
-                # announcement = discord.Embed(
-                #     #author=tournament_name # TODO
-                #     title=f"{round['round_name']} ({puzzle_name}) Results",
-                #     description=f"```\n{_results_str}\n```")
-                #await channel.send(embed=announcement)
-                announcement = f"{round['round_name']} ({puzzle_name}) Results"
-                announcement += f"\n```\n{_results_str}\n```"
+            solns_file = round_dir / 'solutions.txt'
+            with open(solns_file, 'r', encoding='utf-8') as sf:
+                solns_str = sf.read()
+            _results_str = results_str(solns_str, level_code, round['metric'],
+                                       puzzle_points=round['total_points'])
 
-                # TODO: Add current overall tournament standings
+            # Embed doesn't seem to be wide enough for tables
+            # announcement = discord.Embed(
+            #     #author=tournament_name # TODO
+            #     title=f"{round['round_name']} ({puzzle_name}) Results",
+            #     description=f"```\n{_results_str}\n```")
+            #await channel.send(embed=announcement)
+            announcement = f"{round['round_name']} ({puzzle_name}) Results"
+            announcement += f"\n```\n{_results_str}\n```"
 
-                # TODO: Also attach blurbs.txt
+            # TODO: Add current overall tournament standings
 
-                sf.seek(0)  # Reset file cursor
+            # TODO: Also attach blurbs.txt
 
-                # Call synchronously to ensure no other coroutine can read/write tournament data (else we might overwrite
-                # them)
-                msg = channel.send(announcement) # TODO: Why is this broken?: , file=discord.File(sf))
+            # Call synchronously to ensure no other coroutine can read/write tournament data (else we might overwrite
+            # them)
+            msg = channel.send(announcement, file=discord.File(str(solns_file), filename=solns_file.name))
 
             round_metadata['end_post'] = msg.jump_url
 
