@@ -56,10 +56,6 @@ bot = commands.Bot(command_prefix='!',
 
 @bot.event
 async def on_ready():
-    # Start bot's looping tasks
-    announce_tournament_round_start.start()
-    announce_tournament_round_results.start()
-
     print(f'{bot.user.name} has connected to Discord!')
 
 @bot.event
@@ -109,7 +105,26 @@ class Tournament(commands.Cog):  # name="Help text name?"
     def __init__(self, bot):
        self.bot = bot
 
+       # Start bot's looping tasks
+       self.announce_tournament_round_start.start()
+       self.announce_tournament_round_results.start()
+
+    def get_active_tournament_dir_and_metadata(self):
+        """Helper to fetch the active tournament directory and metadata."""
+        if not ACTIVE_TOURNAMENT_FILE.exists():
+            raise FileNotFoundError("No active tournament!")
+
+        with open(ACTIVE_TOURNAMENT_FILE, 'r', encoding='utf-8') as f:
+            tournament_dir = TOURNAMENTS_DIR / f.read().strip()
+
+        with open(tournament_dir / 'tournament_metadata.json', 'r', encoding='utf-8') as f:
+            tournament_metadata = json.load(f)
+
+        return tournament_dir, tournament_metadata
+
     @commands.command(name='tournament-start')
+    # TODO: Commented out all the public channel / permissions command lock decorators for debugging since doing so
+    #       dynamically on --debug seems difficult - uncomment them!
     #@commands.is_owner()  # TODO: @commands.has_role('tournament-host')
     async def tournament_start(self, ctx, name):
         """Start a tournament with the given name.
@@ -148,18 +163,12 @@ class Tournament(commands.Cog):  # name="Help text name?"
     #@commands.is_owner()  # TODO: @commands.has_role('tournament-host')
     async def tournament_end(self, ctx):
         """End the active tournament."""
-        if not ACTIVE_TOURNAMENT_FILE.exists():
-            raise FileNotFoundError("No active tournament!")
-
-        with open(ACTIVE_TOURNAMENT_FILE, 'r', encoding='utf-8') as f:
-            tournament_dir = TOURNAMENTS_DIR / f.read().strip()
+        _, tournament_metadata = self.get_active_tournament_dir_and_metadata()
 
         # TODO: End all active rounds and tabulate their results
-        with open(tournament_dir / 'active_rounds.json', 'r', encoding='utf-8') as f:
-            active_rounds = json.load(f)
-
-        for round_name, round_dir_name in active_rounds.items():
-            pass
+        for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
+            if 'end_post' not in round_metadata:
+                pass
 
         ACTIVE_TOURNAMENT_FILE.unlink()
 
@@ -188,6 +197,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
         end: The datetime that submissions to the round close. Same format as `start`.
              If excluded puzzle is open until the tournament is ended (e.g. the 2019 tournament's 'Additional' puzzles).
         """
+        tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata()
+
         # Check attached puzzle
         assert len(ctx.message.attachments) == 1, "Expected one attached puzzle file!"
 
@@ -216,31 +227,24 @@ class Tournament(commands.Cog):  # name="Help text name?"
         if start is not None:
             start_dt = parse_datetime_str(start)
         else:
-            start_dt = datetime.utcnow().replace(tzinfo=timezone.utc)
+            start_dt = datetime.now(timezone.utc)
         start = start_dt.isoformat()
 
         if end is not None:
             end_dt = parse_datetime_str(end)
             if end_dt <= start_dt:
                 raise ValueError("Round end time is not after round start time.")
-            elif end_dt <= datetime.utcnow().replace(tzinfo=timezone.utc):
+            elif end_dt <= datetime.now(timezone.utc):
                 raise ValueError("Round end time is in past.")
             end = end_dt.isoformat()
 
         validate_metric(metric)
-
-        # Identify the active tournament's directory
-        with open(ACTIVE_TOURNAMENT_FILE, 'r', encoding='utf-8') as f:
-            tournament_dir = TOURNAMENTS_DIR / f.read().strip()
 
         # Check for directory conflict before doing any writes
         round_dir_name = f'{slugify(round_name)}_{slugify(level.name)}'
         round_dir = tournament_dir / round_dir_name
         if round_dir.exists():
             raise FileExistsError(f"Round directory {round_dir} already exists")
-
-        with open(tournament_dir / 'tournament_metadata.json', 'r', encoding='utf-8') as f:
-            tournament_metadata = json.load(f)
 
         if level.name in tournament_metadata['rounds']:
             raise ValueError(f"Puzzle with name `{level.name}` already exists in the current tournament")
@@ -288,6 +292,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
                          #       someone will inevitably forget to use DMs
     async def tournament_submit(self, ctx):
         """Submit the attached solution file to the matching active tournament puzzle."""
+        tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata()
+
         assert len(ctx.message.attachments) == 1, "Expected one attached solution file!"
         soln_bytes = await ctx.message.attachments[0].read()
         try:
@@ -301,10 +307,6 @@ class Tournament(commands.Cog):  # name="Help text name?"
         # Discord tag used to ensure no name collision errors or exploits, and so the host knows who to message in case of
         # any issues
         discord_tag = str(ctx.message.author)  # e.g. <username>#1234. Guaranteed to be unique
-
-        # Identify the active tournament's directory
-        with open(ACTIVE_TOURNAMENT_FILE, 'r', encoding='utf-8') as f:
-            tournament_dir = TOURNAMENTS_DIR / f.read().strip()
 
         # Register this discord_tag: author_name mapping if it is not already registered
         # If the solution's author_name conflicts with that of another player, request they change it
@@ -331,19 +333,15 @@ class Tournament(commands.Cog):  # name="Help text name?"
         with open(tournament_dir / 'participants.json', 'w', encoding='utf-8') as f:
             json.dump(participants, f, ensure_ascii=False, indent=4)
 
-        # Find an active round with matching level name and fetch its level code and metric
-        with open(tournament_dir / 'tournament_metadata.json', 'r', encoding='utf-8') as f:
-            tournament_metadata = json.load(f)
-
-        # Since otherwise future puzzle names could in theory be searched for, make sure we return the same message whether
-        # a puzzle does not exist or is not yet open for submissions
+        # Since otherwise future puzzle names could in theory be searched for, make sure we return the same message
+        # whether a puzzle does not exist or is not yet open for submissions
         unknown_level_exc = ValueError(f"No active tournament level `{level_name}`; ensure the first line of your solution"
                                        + " has the correct level name or check the start/end dates of the given puzzle.")
         if level_name not in tournament_metadata['rounds']:
             raise unknown_level_exc
         round_metadata = tournament_metadata['rounds'][level_name]
 
-        round_dir = tournament_dir / tournament_metadata['rounds'][level_name]['dir']
+        round_dir = tournament_dir / round_metadata['dir']
 
         # Check that the message was sent during the round's submission period
 
@@ -427,16 +425,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
     async def tournament_info(self, ctx, puzzle_name=None):
         """List information on the active tournament or if provided, the specified puzzle."""
         # TODO: Accept round name as an alternative
-
-        if not ACTIVE_TOURNAMENT_FILE.exists():
-            await ctx.send(f"No active tournament!")
-            return
-
-        with open(ACTIVE_TOURNAMENT_FILE, 'r', encoding='utf-8') as f:
-            tournament_dir = TOURNAMENTS_DIR / f.read().strip()
-
-        with open(tournament_dir / 'tournament_metadata.json', 'r', encoding='utf-8') as tm_f:
-            tournament_metadata = json.load(tm_f)
+        tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata()
 
         if puzzle_name is None:
             # List rounds
@@ -502,183 +491,179 @@ class Tournament(commands.Cog):  # name="Help text name?"
         await ctx.send(embed=embed)
 
     # TODO tournament-submit-non-scoring-solution
-bot.add_cog(Tournament(bot))
 
+    def results_str(self, solns_str, level_code, metric, puzzle_points=None):
+        """Given a solutions.txt, level, and metric, return a formatted string of the players' ranked results.
+        Format: Rank,Player,Score,Metric Score
+        If puzzle points is included add: ,Rel. Metric,Points
+        """
+        results = "# ,Player      ,Score          ,Metric Score"
+        if puzzle_points is not None:
+            results += ",Rel. Metric,Points"
 
-def results_str(solns_str, level_code, metric, puzzle_points=None):
-    """Given a solutions.txt, level, and metric, return a formatted string of the players' ranked results.
-    Format: Rank,Player,Score,Metric Score
-    If puzzle points is included add: ,Rel. Metric,Points
-    """
-    results = "# ,Player      ,Score          ,Metric Score"
-    if puzzle_points is not None:
-        results += ",Rel. Metric,Points"
+        level = schem.Level(level_code)
+        solutions = [schem.Solution(level, soln_str) for soln_str in schem.Solution.split_solutions(solns_str)]
 
-    level = schem.Level(level_code)
-    solutions = [schem.Solution(level, soln_str) for soln_str in schem.Solution.split_solutions(solns_str)]
+        if not solutions:
+            return results
 
-    if not solutions:
+        # Calculate each score and the top score
+        metric_scores = [eval_metric(solution, metric) for solution in solutions]
+        min_metric_score = min(metric_scores)
+
+        # Sort by metric and add lines
+        last_rank = 0  # For tie-handling
+        last_metric = None
+        for rank, (solution, metric_score) in enumerate(sorted(zip(solutions, metric_scores), key=lambda x: x[1])):
+            results += (f"\n{str(rank).ljust(2)},{solution.author.ljust(12)},{str(solution.expected_score).ljust(15)}"
+                        + f",{f'{metric_score:.1g}'.ljust(12)}")
+            if puzzle_points is not None:
+                relative_metric = min_metric_score / metric_score
+                points = puzzle_points * relative_metric
+                results += f",{f'{relative_metric:.3g}'.ljust(11)},{f'{points:.3g}'.ljust(6)}"
+
         return results
 
-    # Calculate each score and the top score
-    metric_scores = [eval_metric(solution, metric) for solution in solutions]
-    min_metric_score = min(metric_scores)
+    @tasks.loop(minutes=5)
+    async def announce_tournament_round_start(self):
+        """Announce any rounds that just started."""
+        if not ACTIVE_TOURNAMENT_FILE.exists():
+            return
 
-    # Sort by metric and add lines
-    last_rank = 0  # For tie-handling
-    last_metric = None
-    for rank, (solution, metric_score) in enumerate(sorted(zip(solutions, metric_scores), key=lambda x: x[1])):
-        results += (f"\n{str(rank).ljust(2)},{solution.author.ljust(12)},{str(solution.expected_score).ljust(15)}"
-                    + f",{f'{metric_score:.1g}'.ljust(12)}")
-        if puzzle_points is not None:
-            relative_metric = min_metric_score / metric_score
-            points = puzzle_points * relative_metric
-            results += f",{f'{relative_metric:.3g}'.ljust(11)},{f'{points:.3g}'.ljust(6)}"
+        await self.bot.wait_until_ready()  # Looks awkward but apparently get_channel can return None if bot isn't ready
+        channel = self.bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
 
-    return results
+        tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata()
 
-@tasks.loop(minutes=5)
-async def announce_tournament_round_start():
-    if not ACTIVE_TOURNAMENT_FILE.exists():
-        return
+        # Announce any round that started in the last hour and hasn't already been anounced
+        cur_time = datetime.now(timezone.utc)
+        for puzzle_name, round in tournament_metadata['rounds'].items():
+            # Ignore round if it was already announced or didn't open for submissions in the last hour.
+            # The hour limit is to ensure the bot doesn't spam too many announcements if something goes nutty,
+            # while leaving some flex time in case the bot was down for some reason right after the puzzle started.
+            start_dt = datetime.fromisoformat(round['start'])
+            if 'start_post' in round or not 0 <= (cur_time - start_dt).total_seconds() <= 3600:
+                # If we missed the hour limit but the puzzle hasn't ended, log a warning
+                if 'start_post' not in round and ('end' not in round or cur_time < datetime.fromisoformat(round['end'])):
+                    # This will spam the log but only 96 times a day...
+                    print(f"Error: Puzzle {puzzle_name} was not announced but should be open for submissions")
+                continue
 
-    with open(ACTIVE_TOURNAMENT_FILE, 'r', encoding='utf-8') as f:
-        tournament_dir = TOURNAMENTS_DIR / f.read().strip()
+            print(f"Announcing {puzzle_name} start")
 
-    channel = bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
+            round_dir = tournament_dir / round['dir']
 
-    with open(tournament_dir / 'tournament_metadata.json', 'r', encoding='utf-8') as tm_f:
-        tournament_metadata = json.load(tm_f)
+            puzzle_file = next(round_dir.glob('*.puzzle'), None)
+            if puzzle_file is None:
+                raise FileNotFoundError(f"{round_dir} puzzle file not found")
 
-    # Announce any round that started in the last hour and hasn't already been anounced
-    cur_time = datetime.now(timezone.utc)
-    for puzzle_name, round in tournament_metadata['rounds'].items():
-        # Ignore round if it was already announced or didn't open for submissions in the last hour.
-        # The hour limit is to ensure the bot doesn't spam too many announcements if something goes nutty,
-        # while leaving some flex time in case the bot was down for some reason right after the puzzle started.
-        start_dt = datetime.fromisoformat(round['start'])
-        if 'start_post' in round or not 0 <= (cur_time - start_dt).total_seconds() <= 3600:
-            # If we missed the hour limit but the puzzle hasn't ended, log a warning
-            if 'start_post' not in round and ('end' not in round or cur_time < datetime.fromisoformat(round['end'])):
-                # This will spam the log but only 96 times a day...
-                print(f"Error: Puzzle {puzzle_name} was not announced but should be open for submissions")
-            continue
+            with open(puzzle_file, 'r', encoding='utf-8') as pf:
+                level_code = pf.read()
+                single_line_level_code = level_code.replace('\r', '').replace('\n', '')
 
-        print(f"Announcing {puzzle_name} start")
+                # Discord's embeds seem to be the only way to do a hyperlink to hide the giant puzzle preview link
+                announcement = discord.Embed(
+                    #author=tournament_name # TODO
+                    title=f"Announcing round {round['round_name']}, {puzzle_name}!",
+                    #description=flavour_text, # TODO
+                )
+                announcement.add_field(name='Preview',
+                                       value=f"[Coranac Viewer]({CORANAC_SITE}?code={single_line_level_code})",
+                                       inline=True)
+                announcement.add_field(name='Metric', value=round['metric'], inline=True)
+                round_end = round['end'] + ' UTC' if 'end' in round else "Tournament Close"
+                announcement.add_field(name='Deadline', value=round_end, inline=True)
+                # TODO: Add @tournament or something that notifies people who opt-in, preferably updateable by bot
 
-        round_dir = tournament_dir / round['dir']
+                pf.seek(0)  # Reset file cursor
 
-        puzzle_file = next(round_dir.glob('*.puzzle'), None)
-        if puzzle_file is None:
-            raise FileNotFoundError(f"{round_dir} puzzle file not found")
+                # Call synchronously to ensure no other coroutine can read/write tournament data (else we might overwrite
+                # them)
+                # TODO: Might be worth using an async lock for the tournament metadata file so the below can be async with
+                #       any bot coroutines that aren't accessing the tournament metadata (same for announce_results)
+                msg = channel.send(embed=announcement)  # TODO: Why is this broken?: , file=discord.File(pf))
 
-        with open(puzzle_file, 'r', encoding='utf-8') as pf:
-            level_code = pf.read()
-            single_line_level_code = level_code.replace('\r', '').replace('\n', '')
+            # Keep the link to the original announcement post for !tournament-info. We can also check this to know whether
+            # we've already done an announcement post
+            round['start_post'] = msg.jump_url
 
-            # Discord's embeds seem to be the only way to do a hyperlink to hide the giant puzzle preview link
-            announcement = discord.Embed(
-                #author=tournament_name # TODO
-                title=f"Announcing round {round['round_name']}, {puzzle_name}!",
-                #description=flavour_text, # TODO
-            )
-            announcement.add_field(name='Preview',
-                                   value=f"[Coranac Viewer]({CORANAC_SITE}?code={single_line_level_code})",
-                                   inline=True)
-            announcement.add_field(name='Metric', value=round['metric'], inline=True)
-            round_end = round['end'] + ' UTC' if 'end' in round else "Tournament Close"
-            announcement.add_field(name='Deadline', value=round_end, inline=True)
-            # TODO: Add @tournament or something that notifies people who opt-in, preferably updateable by bot
+        with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as tm_f:
+            json.dump(tournament_metadata, tm_f, ensure_ascii=False, indent=4)
 
-            pf.seek(0)  # Reset file cursor
+    @tasks.loop(minutes=5)
+    async def announce_tournament_round_results(self):
+        """Announce the results of any rounds that ended 15+ minutes ago."""
+        if not ACTIVE_TOURNAMENT_FILE.exists():
+            return
 
-            # Call synchronously to ensure no other coroutine can read/write tournament data (else we might overwrite
-            # them)
-            # TODO: Might be worth using an async lock for the tournament metadata file so the below can be async with
-            #       any bot coroutines that aren't accessing the tournament metadata (same for announce_results)
-            msg = channel.send(embed=announcement)  # TODO: Why is this broken?: , file=discord.File(pf))
+        await self.bot.wait_until_ready()  # Looks awkward but apparently get_channel can return None if bot isn't ready
+        channel = self.bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
 
-        # Keep the link to the original announcement post for !tournament-info. We can also check this to know whether
-        # we've already done an announcement post
-        round['start_post'] = msg.jump_url
+        tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata()
 
-    with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as tm_f:
-        json.dump(tournament_metadata, tm_f, ensure_ascii=False, indent=4)
+        # Announce the end of any round that ended over 15 min to 1:15 min ago and hasn't already has its end ennounced
+        # The 15 minute delay is to give time for any last-minute submissions to be validated
+        # TODO: Use some aync locks or some other proper way to ensure all submissions are done processing, without
+        #       needing a hard-coded delay
+        # The hour limit is just to make sure the bot doesn't spam old announcements if something goes nutty
+        cur_time = datetime.now(timezone.utc)
+        for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
+            # Ignore puzzles that don't end until the tournament is over
+            if 'end' not in round_metadata:
+                continue
 
-@tasks.loop(minutes=5)
-async def announce_tournament_round_results():
-    if not ACTIVE_TOURNAMENT_FILE.exists():
-        return
+            end_dt = datetime.fromisoformat(round_metadata['end'])
+            seconds_since_end = (cur_time - end_dt).total_seconds()
+            if 'end_post' in round_metadata or not 900 <= seconds_since_end <= 4500: # 15 min to 1 hour 15 min
+                # If the hour announcement window has passed and the results post was never made, log a warning
+                if 'end_post' not in round_metadata and (cur_time - end_dt).total_seconds() > 4500:
+                    # This will spam the log but only 96 times a day... indefinitely
+                    print(f"Error: Puzzle {puzzle_name} has ended but results were not announced right afterward")
+                continue
 
-    with open(ACTIVE_TOURNAMENT_FILE, 'r', encoding='utf-8') as f:
-        tournament_dir = TOURNAMENTS_DIR / f.read().strip()
+            print(f"Announcing {puzzle_name} results")
 
-    channel = bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
+            round_dir = tournament_dir / round_metadata['dir']
 
-    with open(tournament_dir / 'tournament_metadata.json', 'r', encoding='utf-8') as tm_f:
-        tournament_metadata = json.load(tm_f)
+            with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as sf:
+                solns_str = sf.read()
 
-    # Announce the end of any round that ended over 15 min to 1:15 min ago and hasn't already has its end ennounced
-    # The 15 minute delay is to give time for any last-minute submissions to be validated
-    # TODO: Use some aync locks or some other proper way to ensure all submissions are done processing, without
-    #       needing a hard-coded delay
-    # The hour limit is just to make sure the bot doesn't spam old announcements if something goes nutty
-    cur_time = datetime.now(timezone.utc)
-    for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
-        # Ignore puzzles that don't end until the tournament is over
-        if 'end' not in round_metadata:
-            continue
+            puzzle_file = next(round_dir.glob('*.puzzle'), None)
+            if puzzle_file is None:
+                raise FileNotFoundError(f"{round_dir} puzzle file not found")
+            with open(puzzle_file, encoding='utf-8') as pf:
+                level_code = pf.read()
 
-        end_dt = datetime.fromisoformat(round_metadata['end'])
-        seconds_since_end = (cur_time - end_dt).total_seconds()
-        if 'end_post' in round_metadata or not 900 <= seconds_since_end <= 4500: # 15 min to 1 hour 15 min
-            # If the hour announcement window has passed and the results post was never made, log a warning
-            if 'end_post' not in round_metadata and (cur_time - end_dt).total_seconds() > 4500:
-                # This will spam the log but only 96 times a day... indefinitely
-                print(f"Error: Puzzle {puzzle_name} has ended but results were not announced right afterward")
-            continue
+            # TODO Modify standings.csv
 
-        print(f"Announcing {puzzle_name} results")
+            with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as sf:
+                _results_str = results_str(sf.read(), level_code, round['metric'],
+                                           puzzle_points=round['total_points'])
+                # Embed doesn't seem to be wide enough for tables
+                # announcement = discord.Embed(
+                #     #author=tournament_name # TODO
+                #     title=f"{round['round_name']} ({puzzle_name}) Results",
+                #     description=f"```\n{_results_str}\n```")
+                #await channel.send(embed=announcement)
+                announcement = f"{round['round_name']} ({puzzle_name}) Results"
+                announcement += f"\n```\n{_results_str}\n```"
 
-        round_dir = tournament_dir / round_metadata['dir']
+                # TODO: Add current overall tournament standings
 
-        with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as sf:
-            solns_str = sf.read()
+                # TODO: Also attach blurbs.txt
 
-        puzzle_file = next(round_dir.glob('*.puzzle'), None)
-        if puzzle_file is None:
-            raise FileNotFoundError(f"{round_dir} puzzle file not found")
-        with open(puzzle_file, encoding='utf-8') as pf:
-            level_code = pf.read()
+                sf.seek(0)  # Reset file cursor
 
-        # TODO Modify standings.csv
+                # Call synchronously to ensure no other coroutine can read/write tournament data (else we might overwrite
+                # them)
+                msg = channel.send(announcement) # TODO: Why is this broken?: , file=discord.File(sf))
 
-        with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as sf:
-            _results_str = results_str(sf.read(), level_code, round['metric'],
-                                       puzzle_points=round['total_points'])
-            # Embed doesn't seem to be wide enough for tables
-            # announcement = discord.Embed(
-            #     #author=tournament_name # TODO
-            #     title=f"{round['round_name']} ({puzzle_name}) Results",
-            #     description=f"```\n{_results_str}\n```")
-            #await channel.send(embed=announcement)
-            announcement = f"{round['round_name']} ({puzzle_name}) Results"
-            announcement += f"\n```\n{_results_str}\n```"
+            round_metadata['end_post'] = msg.jump_url
 
-            # TODO: Add current overall tournament standings
+        with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as tm_f:
+            json.dump(tournament_metadata, tm_f, ensure_ascii=False, indent=4)
 
-            # TODO: Also attach blurbs.txt
-
-            sf.seek(0)  # Reset file cursor
-
-            # Call synchronously to ensure no other coroutine can read/write tournament data (else we might overwrite
-            # them)
-            msg = channel.send(announcement) # TODO: Why is this broken?: , file=discord.File(sf))
-
-        round_metadata['end_post'] = msg.jump_url
-
-    with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as tm_f:
-        json.dump(tournament_metadata, tm_f, ensure_ascii=False, indent=4)
+bot.add_cog(Tournament(bot))
 
 if __name__ == '__main__':
     bot.run(TOKEN)
