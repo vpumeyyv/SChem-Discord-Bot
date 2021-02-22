@@ -125,6 +125,7 @@ def validate_metric(metric_str):
 
 def eval_metric(soln, metric_str):
     """Score the (assumed to be already-validated) given solution using the given metric expression.
+    BEDMAS order is not guaranteed so different operator expressions should be within their own sets of brackets.
     Valid ops: +, -, *, /, ** or ^
     Valid terms: any real number, or any of:
         cycles, reactors, symbols: Per usual.

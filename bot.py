@@ -166,7 +166,6 @@ class Tournament(commands.Cog):  # name="Help text name?"
         # TODO: Announce tournament results
         await ctx.send("Tournament's over my dudes")
 
-
     # TODO: Puzzle flavour text
     @commands.command(name='tournament-add-puzzle')
     #@commands.is_owner()  # TODO: @commands.has_role('tournament-host')
@@ -174,19 +173,20 @@ class Tournament(commands.Cog):  # name="Help text name?"
     async def tournament_add_puzzle(self, ctx, round_name, metric, total_points: int, start=None, end=None):
         """Add the attached puzzle file as a new round of the tournament.
 
-        round_name: e.g. "Round 1" or "Bonus 1".
-        metric: The equation that will govern the raw score of a player's submission. Must be calculable given only the
-                solution. A player's final score for the round will be the top metric score divided by this metric score.
+        round_name: e.g. `"Round 1"` or `"Bonus 1"`.
+        metric: The equation that will govern the raw score of a player's submission. A player's final score for the
+                round will be the top metric score divided by this metric score.
+                Allowed terms: `cycles`, `reactors`, `symbols`, `waldopath`, `waldos`, `bonders`
+                E.g.: `"cycles + (0.1 * symbols) + (bonders^2)"`
+                      Note the excess brackets since operator order isn't currently guaranteed to follow BEDMAS.
         total_points: Number of points that the first place player of the round will receive.
-        utc_start: The datetime that submissions to the round open, in ISO format. If timezone unspecified, assumed to be
-                   UTC.
-                   E.g.: "2000-01-31", "2000-01-31 17:00:00", "2000-01-31T17:00:00-05:00".
-                   If excluded puzzle is open as soon as the tournament becomes active (e.g. the 2019 tournament's
-                   'Additional' puzzles).
-        utc_end: The datetime that submissions to the round close, in ISO format. If timezone unspecified, assumed to be
-                 UTC.
-                 E.g.: "2000-01-31", "2000-01-31 17:00:00", "2000-01-31T17:00:00-05:00".
-                 If excluded puzzle is open until the tournament is ended (e.g. the 2019 tournament's 'Additional' puzzles).
+        start: The datetime that submissions to the round open, in ISO format. If timezone unspecified, assumed to be
+               UTC.
+               E.g.: `2000-01-31`, `"2000-01-31 17:00:00"`, `2000-01-31T17:00:00-05:00`.
+               If excluded puzzle is open as soon as the tournament becomes active (e.g. the 2019 tournament's
+               'Additional' puzzles).
+        end: The datetime that submissions to the round close. Same format as `start`.
+             If excluded puzzle is open until the tournament is ended (e.g. the 2019 tournament's 'Additional' puzzles).
         """
         # Check attached puzzle
         assert len(ctx.message.attachments) == 1, "Expected one attached puzzle file!"
@@ -273,6 +273,9 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
         await ctx.send(f"Successfully added {round_name} {level.name} to {tournament_metadata['name']}")
 
+    # TODO: tournament-update-puzzle (e.g. puzzle change, extending deadline, changing flavour text typo, etc)
+    #       should basically be same as add-puzzle but it can overwrite and maybe re-validates solutions.txt if the
+    #       puzzle file changed
 
     # TODO: DDOS-mitigating measures such as:
     #       - maximum expected cycle count (set to e.g. 1 million unless specified otherwise for a puzzle) above which
@@ -436,8 +439,22 @@ class Tournament(commands.Cog):  # name="Help text name?"
             tournament_metadata = json.load(tm_f)
 
         if puzzle_name is None:
-            # TODO: Report current standings
-            raise NotImplementedError("Full tournament info not implemented yet")
+            # List rounds
+            embed = discord.Embed(
+                title=tournament_metadata['name'],
+                description="**Rounds**:")
+
+            # TODO: Probably want to sort these by start or something
+            for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
+                if 'start_post' in round_metadata:
+                    embed.description += f"\n{round_metadata['round_name']}, {puzzle_name}: [Announcement]({round_metadata['start_post']})"
+                    if 'end_post' in round_metadata:
+                        embed.description += f" | [Results]({round_metadata['end_post']})"
+
+            # TODO: Add current standings
+
+            await ctx.send(embed=embed)
+            return
 
         # Make sure we return the same error messageg whether the puzzle doesn't exist or user doesn't have permission to
         # see it, so future round names can't be inferred
@@ -451,7 +468,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         msg_time = ctx.message.created_at.replace(tzinfo=timezone.utc)  # No exploits here since edits will always be later
         if ('end' not in round_metadata
                 or msg_time <= datetime.fromisoformat(round_metadata['end'])
-                or 'active' in round_metadata):
+                or 'end_post' not in round_metadata):
             is_owner = await self.bot.is_owner(ctx.author)  # TODO: 'tournament-host' in ctx.author.roles or some such
             if not is_owner:
                 raise puzzle_nonexistent_or_not_closed_exc
@@ -481,6 +498,38 @@ class Tournament(commands.Cog):  # name="Help text name?"
 bot.add_cog(Tournament(bot))
 
 
+def results_str(solns_str, level_code, metric, puzzle_points=None):
+    """Given a solutions.txt, level, and metric, return a formatted string of the players' ranked results.
+    Format: Rank,Player,Score,Metric Score
+    If puzzle points is included add: ,Rel. Metric,Points
+    """
+    results = "# ,Player      ,Score          ,Metric Score"
+    if puzzle_points is not None:
+        results += ",Rel. Metric,Points"
+
+    level = schem.Level(level_code)
+    solutions = [schem.Solution(level, soln_str) for soln_str in schem.Solution.split_solutions(solns_str)]
+
+    if not solutions:
+        return results
+
+    # Calculate each score and the top score
+    metric_scores = [eval_metric(solution, metric) for solution in solutions]
+    min_metric_score = min(metric_scores)
+
+    # Sort by metric and add lines
+    last_rank = 0  # For tie-handling
+    last_metric = None
+    for rank, (solution, metric_score) in enumerate(sorted(zip(solutions, metric_scores), key=lambda x: x[1])):
+        results += (f"\n{str(rank).ljust(2)},{solution.author.ljust(12)},{str(solution.expected_score).ljust(15)}"
+                    + f",{f'{metric_score:.1g}'.ljust(12)}")
+        if puzzle_points is not None:
+            relative_metric = min_metric_score / metric_score
+            points = puzzle_points * relative_metric
+            results += f",{f'{relative_metric:.3g}'.ljust(11)},{f'{points:.3g}'.ljust(6)}"
+
+    return results
+
 @tasks.loop(minutes=5)
 async def announce_tournament_round_start():
     if not ACTIVE_TOURNAMENT_FILE.exists():
@@ -501,9 +550,9 @@ async def announce_tournament_round_start():
         # The hour limit is to ensure the bot doesn't spam too many announcements if something goes nutty,
         # while leaving some flex time in case the bot was down for some reason right after the puzzle started.
         start_dt = datetime.fromisoformat(round['start'])
-        if 'active' in round or not 0 <= (cur_time - start_dt).total_seconds() <= 3600:
+        if 'start_post' in round or not 0 <= (cur_time - start_dt).total_seconds() <= 3600:
             # If we missed the hour limit but the puzzle hasn't ended, log a warning
-            if 'active' not in round and ('end' not in round or cur_time < datetime.fromisoformat(round['end'])):
+            if 'start_post' not in round and ('end' not in round or cur_time < datetime.fromisoformat(round['end'])):
                 # This will spam the log but only 96 times a day...
                 print(f"Error: Puzzle {puzzle_name} was not announced but should be open for submissions")
             continue
@@ -540,44 +589,14 @@ async def announce_tournament_round_start():
             # them)
             # TODO: Might be worth using an async lock for the tournament metadata file so the below can be async with
             #       any bot coroutines that aren't accessing the tournament metadata (same for announce_results)
-            channel.send(embed=announcement)  # TODO: Why is this broken?: , file=discord.File(pf))
+            msg = channel.send(embed=announcement)  # TODO: Why is this broken?: , file=discord.File(pf))
 
-        round['active'] = True  # Spooky but should be safe while iterating items()
+        # Keep the link to the original announcement post for !tournament-info. We can also check this to know whether
+        # we've already done an announcement post
+        round['start_post'] = msg.jump_url
 
     with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as tm_f:
         json.dump(tournament_metadata, tm_f, ensure_ascii=False, indent=4)
-
-def results_str(solns_str, level_code, metric, puzzle_points=None):
-    """Given a solutions.txt, level, and metric, return a formatted string of the players' ranked results.
-    Format: Rank,Player,Score,Metric Score
-    If puzzle points is included add: ,Rel. Metric,Points
-    """
-    results = "# ,Player      ,Score          ,Metric Score"
-    if puzzle_points is not None:
-        results += ",Rel. Metric,Points"
-
-    level = schem.Level(level_code)
-    solutions = [schem.Solution(level, soln_str) for soln_str in schem.Solution.split_solutions(solns_str)]
-
-    if not solutions:
-        return results
-
-    # Calculate each score and the top score
-    metric_scores = [eval_metric(solution, metric) for solution in solutions]
-    min_metric_score = min(metric_scores)
-
-    # Sort by metric and add lines
-    last_rank = 0  # For tie-handling
-    last_metric = None
-    for rank, (solution, metric_score) in enumerate(sorted(zip(solutions, metric_scores), key=lambda x: x[1])):
-        results += (f"\n{str(rank).ljust(2)},{solution.author.ljust(12)},{str(solution.expected_score).ljust(15)}"
-                    + f",{f'{metric_score:.1g}'.ljust(12)}")
-        if puzzle_points is not None:
-            relative_metric = min_metric_score / metric_score
-            points = puzzle_points * relative_metric
-            results += f",{f'{relative_metric:.3g}'.ljust(11)},{f'{points:.3g}'.ljust(6)}"
-
-    return results
 
 @tasks.loop(minutes=5)
 async def announce_tournament_round_results():
@@ -598,21 +617,23 @@ async def announce_tournament_round_results():
     #       needing a hard-coded delay
     # The hour limit is just to make sure the bot doesn't spam old announcements if something goes nutty
     cur_time = datetime.now(timezone.utc)
-    for puzzle_name, round in tournament_metadata['rounds'].items():
-        if 'end' not in round:
+    for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
+        # Ignore puzzles that don't end until the tournament is over
+        if 'end' not in round_metadata:
             continue
-        end_dt = datetime.fromisoformat(round['end'])
+
+        end_dt = datetime.fromisoformat(round_metadata['end'])
         seconds_since_end = (cur_time - end_dt).total_seconds()
-        if 'active' not in round or not 900 <= seconds_since_end <= 4500: # 15 min to 1 hour 15 min
-            # If the hour announcement window has passed and the puzzle is still active, log a warning
-            if 'active' in round and (cur_time - end_dt).total_seconds() > 4500:
+        if 'end_post' in round_metadata or not 900 <= seconds_since_end <= 4500: # 15 min to 1 hour 15 min
+            # If the hour announcement window has passed and the results post was never made, log a warning
+            if 'end_post' not in round_metadata and (cur_time - end_dt).total_seconds() > 4500:
                 # This will spam the log but only 96 times a day... indefinitely
                 print(f"Error: Puzzle {puzzle_name} has ended but results were not announced right afterward")
             continue
 
         print(f"Announcing {puzzle_name} results")
 
-        round_dir = tournament_dir / round['dir']
+        round_dir = tournament_dir / round_metadata['dir']
 
         with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as sf:
             solns_str = sf.read()
@@ -645,9 +666,9 @@ async def announce_tournament_round_results():
 
             # Call synchronously to ensure no other coroutine can read/write tournament data (else we might overwrite
             # them)
-            channel.send(announcement) # TODO: Why is this broken?: , file=discord.File(sf))
+            msg = channel.send(announcement) # TODO: Why is this broken?: , file=discord.File(sf))
 
-        del round['active']  # Spooky but should be safe while iterating items()
+        round_metadata['end_post'] = msg.jump_url
 
     with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as tm_f:
         json.dump(tournament_metadata, tm_f, ensure_ascii=False, indent=4)
