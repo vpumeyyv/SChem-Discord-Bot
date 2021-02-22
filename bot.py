@@ -456,7 +456,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
             await ctx.send(embed=embed)
             return
 
-        # Make sure we return the same error messageg whether the puzzle doesn't exist or user doesn't have permission to
+        # Make sure we return the same error message whether the puzzle doesn't exist or user doesn't have permission to
         # see it, so future round names can't be inferred
         puzzle_nonexistent_or_not_closed_exc = FileNotFoundError(f"Puzzle `{puzzle_name}` has not ended or does not exist")
         if puzzle_name not in tournament_metadata['rounds']:
@@ -464,35 +464,42 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
         round_metadata = tournament_metadata['rounds'][puzzle_name]
 
+        if 'start_post' not in round_metadata:
+            # TODO: Provide the TO with info similar to the upcoming announcement post so they can check for errors
+            raise puzzle_nonexistent_or_not_closed_exc
+
+        embed = discord.Embed(title=f"{round_metadata['round_name']}, {puzzle_name}",
+                              description=f"[Announcement]({round_metadata['start_post']})")
+
         # Prevent non-TO users from accessing rounds that haven't ended or that the bot hasn't announced the results of yet
-        msg_time = ctx.message.created_at.replace(tzinfo=timezone.utc)  # No exploits here since edits will always be later
-        if ('end' not in round_metadata
-                or msg_time <= datetime.fromisoformat(round_metadata['end'])
-                or 'end_post' not in round_metadata):
-            is_owner = await self.bot.is_owner(ctx.author)  # TODO: 'tournament-host' in ctx.author.roles or some such
-            if not is_owner:
-                raise puzzle_nonexistent_or_not_closed_exc
+        if 'end_post' in round_metadata:
+            embed.description += f" | [Results]({round_metadata['end_post']})"
+        elif (await self.bot.is_owner(ctx.author)):
+            # If this is the TO, calculate and append the current standings so they can keep an eye on its progress
 
-        # TODO: Merge all the below code with the similar announce_tournament_results code
-        round_dir = tournament_dir / round_metadata['dir']
+            # TODO: Merge all the below code with the similar announce_tournament_results code
+            round_dir = tournament_dir / round_metadata['dir']
 
-        with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as sf:
-            solns_str = sf.read()
+            with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as sf:
+                solns_str = sf.read()
 
-        puzzle_file = next(round_dir.glob('*.puzzle'), None)
-        if puzzle_file is None:
-            print(f"Error: {round_dir} puzzle file not found!")
-            raise FileNotFoundError(f"{round_dir} puzzle file not found; I seem to be experiencing an error.")
-        with open(puzzle_file, 'r', encoding='utf-8') as pf:
-            level_code = pf.read()
+            puzzle_file = next(round_dir.glob('*.puzzle'), None)
+            if puzzle_file is None:
+                print(f"Error: {round_dir} puzzle file not found!")
+                raise FileNotFoundError(f"{round_dir} puzzle file not found; I seem to be experiencing an error.")
+            with open(puzzle_file, 'r', encoding='utf-8') as pf:
+                level_code = pf.read()
 
-        with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as sf:
-            solns_str = sf.read()
+            with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as sf:
+                solns_str = sf.read()
 
-        _results_str = results_str(solns_str, level_code, round_metadata['metric'],
-                                   puzzle_points=round_metadata['total_points'])
+            _results_str = results_str(solns_str, level_code, round_metadata['metric'],
+                                       puzzle_points=round_metadata['total_points'])
 
-        await ctx.send(f"Puzzle {puzzle_name} Results:\n```\n{_results_str}\n```")
+            await ctx.send(f"Results:\n```\n{_results_str}\n```", embed=embed)
+            return
+
+        await ctx.send(embed=embed)
 
     # TODO tournament-submit-non-scoring-solution
 bot.add_cog(Tournament(bot))
