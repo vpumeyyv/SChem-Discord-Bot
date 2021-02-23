@@ -203,13 +203,13 @@ class Tournament(commands.Cog):  # name="Help text name?"
         # Check attached puzzle
         assert len(ctx.message.attachments) == 1, "Expected one attached puzzle file!"
 
-        puzzle_file_name = ctx.message.attachments[0].filename
-        if not puzzle_file_name.endswith('.puzzle'):
+        puzzle_file = ctx.message.attachments[0]
+        if not puzzle_file.filename.endswith('.puzzle'):
             # TODO: Could fall back to slugify(level.name) or slugify(round_name) for the .puzzle file name if the extension
             #       doesn't match
             raise ValueError("Attached file should use the extension .puzzle")
 
-        level_bytes = await ctx.message.attachments[0].read()
+        level_bytes = await puzzle_file.read()
         level_code = level_bytes.decode("utf-8")
         level = schem.Level(level_code)
 
@@ -266,8 +266,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
             round_dir.mkdir()
 
             # Store the .puzzle file
-            with open(round_dir / puzzle_file_name, 'w', encoding='utf-8') as f:
-                f.write(level_code)
+            puzzle_file.save(round_dir / puzzle_file.filename)
 
             (round_dir / 'solutions.txt').touch()
 
