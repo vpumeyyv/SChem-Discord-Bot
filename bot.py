@@ -415,7 +415,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
         new_soln_strs.append(soln_str)
 
         with open(round_dir / 'solutions.txt', 'w', encoding='utf-8') as f:
-            f.write('\n'.join(new_soln_strs))
+            # Make sure not to write windows newlines or python will double the carriage returns
+            f.write('\n'.join(new_soln_strs).replace('\r\n', '\n'))
 
         # TODO: Update submissions_history.txt with time, name, score, and blurb
 
