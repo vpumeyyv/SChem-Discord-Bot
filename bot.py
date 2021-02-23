@@ -501,9 +501,9 @@ class Tournament(commands.Cog):  # name="Help text name?"
         Format: Rank,Player,Score,Metric Score
         If puzzle points is included add: ,Rel. Metric,Points
         """
-        results = "# ,Player      ,Score          ,Metric Score"
+        results = "#  Player       Score           Metric Score"
         if puzzle_points is not None:
-            results += ",Rel. Metric,Points"
+            results += " Rel. Metric Points"
 
         level = schem.Level(level_code)
         solutions = [schem.Solution(level, soln_str) for soln_str in schem.Solution.split_solutions(solns_str)]
@@ -519,13 +519,13 @@ class Tournament(commands.Cog):  # name="Help text name?"
         last_rank = 0  # For tie-handling
         last_metric = None
         for rank, (solution, metric_score) in enumerate(sorted(zip(solutions, metric_scores), key=lambda x: x[1])):
-            results += (f"\n{str(rank).ljust(2)},{solution.author.ljust(12)},{str(solution.expected_score).ljust(15)}"
-                        + f",{f'{format_metric(metric_score, decimals=1)}'.ljust(12)}")
+            results += (f"\n{str(rank).ljust(2)} {solution.author.ljust(12)} {str(solution.expected_score).ljust(15)}"
+                        + f" {f'{format_metric(metric_score, decimals=1)}'.ljust(12)}")
             if puzzle_points is not None:
                 relative_metric = min_metric_score / metric_score
+                results += f" {f'{format_metric(relative_metric, decimals=3)}'.ljust(11)}"
                 points = puzzle_points * relative_metric
-                results += f",{f'{format_metric(relative_metric, decimals=3)}'.ljust(11)}"
-                results += f",{f'{format_metric(points, decimals=3)}'.ljust(6)}"
+                results += f" {f'{format_metric(points, decimals=3)}'.ljust(6)}"
 
         return results
 
@@ -578,7 +578,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
                                        value=f"[Preview]({CORANAC_SITE}?code={single_line_level_code})",
                                        inline=True)
                 announcement.add_field(name='Metric', value=round_metadata['metric'], inline=True)
-                round_end = round_metadata['end'] + ' UTC' if 'end' in round_metadata else "Tournament Close"
+                # Make the ISO datetime string friendlier-looking (e.g. no +00:00) or indicate puzzle is tournament-long
+                round_end = ' '.join(round_metadata['end'][:-6].split('T')) + ' UTC' if 'end' in round_metadata else "Tournament Close"
                 announcement.add_field(name='Deadline', value=round_end, inline=True)
                 # TODO: Add @tournament or something that notifies people who opt-in, preferably updateable by bot
 
