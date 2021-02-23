@@ -516,9 +516,13 @@ class Tournament(commands.Cog):  # name="Help text name?"
         min_metric_score = min(metric_scores)
 
         # Sort by metric and add lines
-        last_rank = 0  # For tie-handling
-        last_metric = None
-        for rank, (solution, metric_score) in enumerate(sorted(zip(solutions, metric_scores), key=lambda x: x[1])):
+        last_metric = None  # For tie-handling
+        for i, (solution, metric_score) in enumerate(sorted(zip(solutions, metric_scores), key=lambda x: x[1])):
+            # Only increment rank if we didn't tie the previous score
+            if metric_score != last_metric:
+                rank = i + 1
+                last_metric = metric_score
+
             results += (f"\n{str(rank).ljust(2)} {solution.author.ljust(12)} {str(solution.expected_score).ljust(15)}"
                         + f" {f'{format_metric(metric_score, decimals=1)}'.ljust(12)}")
             if puzzle_points is not None:
