@@ -486,8 +486,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
             with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as sf:
                 solns_str = sf.read()
 
-            _results_str = results_str(solns_str, level_code, round_metadata['metric'],
-                                       puzzle_points=round_metadata['total_points'])
+            _results_str = self.results_str(solns_str, level_code, round_metadata['metric'],
+                                            puzzle_points=round_metadata['total_points'])
 
             await ctx.send(f"Results:\n```\n{_results_str}\n```", embed=embed)
             return
@@ -646,16 +646,11 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 solns_file = round_dir / 'solutions.txt'
                 with open(solns_file, 'r', encoding='utf-8') as sf:
                     solns_str = sf.read()
-                _results_str = results_str(solns_str, level_code, round['metric'],
-                                           puzzle_points=round['total_points'])
+                _results_str = self.results_str(solns_str, level_code, round_metadata['metric'],
+                                                puzzle_points=round_metadata['total_points'])
 
-                # Embed doesn't seem to be wide enough for tables
-                # announcement = discord.Embed(
-                #     #author=tournament_name # TODO
-                #     title=f"{round['round_name']} ({puzzle_name}) Results",
-                #     description=f"```\n{_results_str}\n```")
-                #await channel.send(embed=announcement)
-                announcement = f"{round['round_name']} ({puzzle_name}) Results"
+                # Embed doesn't seem to be wide enough for tables, use code block
+                announcement = f"{round_metadata['round_name']} ({puzzle_name}) Results"
                 announcement += f"\n```\n{_results_str}\n```"
 
                 # TODO: Add current overall tournament standings
