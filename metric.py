@@ -7,19 +7,31 @@ import ast
 import operator as op
 
 from schem.waldo import InstructionType
+from schem.components import Reactor
 
 # Operators allowed in puzzle metric strings
-METRIC_OPS = {ast.Add: op.add, ast.Sub: op.sub, ast.Mult: op.mul, ast.Div: op.truediv, ast.Pow: op.pow, ast.USub: op.neg}
+METRIC_OPS = {ast.Pow: op.pow, ast.USub: op.neg, ast.Mult: op.mul, ast.Div: op.truediv, ast.Add: op.add, ast.Sub: op.sub,
+              'max': max, 'min': min}
 # Functions for calculating values in a metric equation, given a Solution object
 METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                     'reactors': lambda soln: soln.expected_score.reactors,
                     'symbols': lambda soln: soln.expected_score.symbols,
                     'waldopath': lambda soln: waldopath(soln),
                     'waldos': lambda soln: waldos(soln),
-                    'bonders': lambda soln: used_bonders(soln)}
+                    'bonders': lambda soln: used_bonders(soln),
+                    'arrows': lambda soln: num_arrows(soln),
+                    'flip_flops': lambda soln: num_instrs_of_type(soln, InstructionType.FLIP_FLOP),
+                    'syncs': lambda soln: num_instrs_of_type(soln, InstructionType.SYNC),
+                    'sensors': lambda soln: num_instrs_of_type(soln, InstructionType.SENSE),}
                     # TODO: 'outputs': lambda soln: completed_outputs(soln)
                     #       requires modifications to tournament validator to accept solutions without an expected
                     #       score if the metric contains 'outputs', and to eval the metric even if the solution crashes
+
+def format_metric(metric_score, decimals=1):
+    """12.123 -> 12.1, 12 -> 12, 12.0 -> 12.0"""
+    s = str(metric_score)
+    decimal_idx = s.find('.')
+    return s[:decimal_idx + decimals + 1] if decimal_idx != -1 else s
 
 def waldos(soln):
     """Return the number of waldos used by the solution (i.e. that have any non-Start instruction)."""
@@ -31,11 +43,11 @@ def waldopath(soln):
     Also includes the (at least one) cell occupied by an unused waldo, unlike some older tournament definitions.
     """
     def is_valid_posn(posn):
-        return 0 <= posn.col < 10 and 0 <= posn.row < 8
+        return 0 <= posn.col < Reactor.NUM_COLS and 0 <= posn.row < Reactor.NUM_ROWS
 
     total_waldopath = 0
-    branching_instr_types = set(InstructionType.SENSE, InstructionType.FLIP_FLOP)
-    for reactor in solution.reactors:
+    branching_instr_types = set((InstructionType.SENSE, InstructionType.FLIP_FLOP))
+    for reactor in soln.reactors:
         covered_posns = set()
         for waldo in reactor.waldos:
             # Note that this hasn't accounted for any arrow on the start posn yet
@@ -43,11 +55,11 @@ def waldopath(soln):
                                           if cmd.type == InstructionType.START)
             visited_posn_dirns = set()  # posn + direction tuples to catch when we're looping
             unexplored_branches_stack = [(start_posn, start_dirn)]
-            while unexplored_branches:
+            while unexplored_branches_stack:
                 cur_posn, cur_dirn = unexplored_branches_stack.pop()
 
                 # Check the current cell for an arrow and/or branching instruction
-                arrow_dirn, cmd = waldo.instr_map[cur_posn]
+                arrow_dirn, cmd = waldo.instr_map[cur_posn] if cur_posn in waldo.instr_map else (None, None)
 
                 # Arrows update the direction of the current branch but don't create a new one
                 if arrow_dirn is not None:
@@ -65,7 +77,7 @@ def waldopath(soln):
                     visited_posn_dirns.add(posn_dirn)
 
                 # Add any new branch
-                if cmd.type in branching_instr_types:
+                if cmd is not None and cmd.type in branching_instr_types:
                     next_branch_posn = cur_posn + cmd.direction
                     if is_valid_posn(next_branch_posn):
                         unexplored_branches_stack.append((next_branch_posn, cmd.direction))
@@ -81,13 +93,13 @@ def waldopath(soln):
         # Add this reactor's number of covered posns to the total waldopath
         total_waldopath += len(covered_posns)
 
-    return waldopath
+    return total_waldopath
 
 def used_bonders(soln):
     """Return the number of bonders in the solution which have been placed adjacent to another (compatible) bonder."""
     num_used_bonders = 0
     for reactor in soln.reactors:
-        # TODO: These weren't really meant to be user-exposed
+        # TODO: These weren't really meant to be user-exposed, relying on them is a bit sus
         used_bonders = set(p1 for p1, _, _, in reactor.bonder_plus_pairs)
         used_bonders |= set(p2 for _, p2, _, in reactor.bonder_plus_pairs)
         used_bonders |= set(p1 for p1, _, _, in reactor.bonder_minus_pairs)
@@ -96,16 +108,28 @@ def used_bonders(soln):
 
     return num_used_bonders
 
+def num_arrows(soln):
+    """Return the number of arrows in the solution."""
+    return sum(1
+               for reactor in soln.reactors
+               for waldo in reactor.waldos
+               for arrow, _ in waldo.instr_map.values()
+               if arrow is not None)
+
+def num_instrs_of_type(soln, instr_type):
+    """Return the number of non-arrow instructions of the given type in the solution."""
+    return sum(1
+               for reactor in soln.reactors
+               for waldo in reactor.waldos
+               for _, cmd in waldo.instr_map.values()
+               if cmd is not None and cmd.type == instr_type)
+
 def completed_outputs(soln):
     """Given a Solution object that has run to completion or error, return the number of completed output molecules."""
     return sum(output.current_count for output in soln.outputs)
 
-def metric_vars(metric_str):
-    """Given a metric equation string, return a set of all variables (as strings) used in it."""
-    return ast_vars(ast.parse(metric_str, mode='eval').body)
-
 def ast_vars(node):
-    """Helper to metric_vars. Return a set of all variables (as strings) in the given AST."""
+    """Return a set of all variables in the given AST."""
     if isinstance(node, ast.Name):
         return set((node.id,))
     elif isinstance(node, ast.Num):
@@ -114,24 +138,54 @@ def ast_vars(node):
         return ast_vars(node.left) | ast_vars(node.right)
     elif isinstance(node, ast.UnaryOp):
         return ast_vars(node.operand)
+    elif isinstance(node, ast.Call):
+        return set().union(ast_vars(arg) for arg in node.args)
+    else:
+        raise TypeError(node)
+
+def ast_operators(node):
+    """Return a set of all operators and calls in the given AST."""
+    if isinstance(node, ast.Name):
+        return set()
+    elif isinstance(node, ast.Num):
+        return set()
+    elif isinstance(node, ast.BinOp):
+        return set((type(node.op),)) | ast_operators(node.left) | ast_operators(node.right)
+    elif isinstance(node, ast.UnaryOp):
+        return set((type(node.op),)) | ast_operators(node.operand)
+    elif isinstance(node, ast.Call):
+        return set((node.func.id,)).union(ast_vars(arg) for arg in node.args)
     else:
         raise TypeError(node)
 
 def validate_metric(metric_str):
     """Raise an error if the given metric string is unparsable."""
-    for metric_var in metric_vars(metric_str):
+    # Allow specifying powers as either ^ or **
+    metric_str = metric_str.replace('^', '**')
+
+    # Parse the string as AST
+    metric_ast = ast.parse(metric_str, mode='eval').body
+
+    for metric_op in ast_operators(metric_ast):
+        if metric_op not in METRIC_OPS:
+            raise ValueError(f"Unknown operator `{metric_op}` in metric equation.")
+
+    for metric_var in ast_vars(metric_ast):
         if metric_var not in METRIC_VAR_TO_FN:
             raise ValueError(f"Unknown var `{metric_var}` in metric equation.")
 
 def eval_metric(soln, metric_str):
-    """Score the (assumed to be already-validated) given solution using the given metric expression.
-    BEDMAS order is not guaranteed so different operator expressions should be within their own sets of brackets.
+    """Score the (assumed to be already-validated) given solution using the given metric expression. Respects python's
+    usual order of operations (i.e. BEDMAS).
     Valid ops: +, -, *, /, ** or ^
     Valid terms: any real number, or any of:
         cycles, reactors, symbols: Per usual.
         waldos: Number of non-empty waldos in the solution.
         waldopath: Number of reactor cells crossed by a waldopath
     """
+    # Allow specifying powers as either ^ or **
+    metric_str = metric_str.replace('^', '**')
+
     # Parse the metric into an AST
     ast_tree = ast.parse(metric_str, mode='eval').body
 
@@ -149,8 +203,10 @@ def eval_ast(node, vars_dict):
     elif isinstance(node, ast.Num):
         return node.n
     elif isinstance(node, ast.BinOp):
-        return METRIC_OPS[type(node.op)](eval_ast(node.left, names), eval_ast(node.right, names))
+        return METRIC_OPS[type(node.op)](eval_ast(node.left, vars_dict), eval_ast(node.right, vars_dict))
     elif isinstance(node, ast.UnaryOp):
-        return METRIC_OPS[type(node.op)](eval_ast(node.operand, names))
+        return METRIC_OPS[type(node.op)](eval_ast(node.operand, vars_dict))
+    elif isinstance(node, ast.Call):
+        return METRIC_OPS[node.func.id](eval_ast(arg, vars_dict) for arg in node.args)
     else:
         raise TypeError(node)
