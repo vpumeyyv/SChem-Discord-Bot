@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
-from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -188,14 +188,14 @@ class Tournament(commands.Cog):  # name="Help text name?"
     async def tournament_add_puzzle(self, ctx, round_name, metric, total_points: int, start=None, end=None):
         """Add the attached puzzle file as a new round of the tournament.
 
-        round_name: e.g. `"Round 1"` or `"Bonus 1"`.
+        round_name: e.g. "Round 1" or "Bonus 1".
         metric: The equation that will govern the raw score of a player's submission. A player's final score for the round will be the top metric score divided by this metric score.
-                Allowed terms: Any real number, `cycles`, `reactors`, `symbols`, `waldopath`, `waldos`, `bonders`, `arrows', `flip_flops`, `sensors`, `syncs`.
-                Allowed operators/fns: `max()`, `min()`, `^` (or `**`), `/`, `*`, `+`, `-`. Parsed with standard operator precedence (BEDMAS).
-                E.g.: `"cycles + 0.1 * symbols + bonders^2"`
+                Allowed terms: <Any real number>, cycles, reactors, symbols, waldopath, waldos, bonders, arrows, flip_flops, sensors, syncs.
+                Allowed operators/fns: max(), min(), ^ (or **), /, *, +, -. Parsed with standard operator precedence (BEDMAS).
+                E.g.: "cycles + 0.1 * symbols + bonders^2"
         total_points: Number of points that the first place player of the round will receive.
         start: The datetime that submissions to the round open, in ISO format. If timezone unspecified, assumed to be UTC.
-               E.g.: `2000-01-31`, `"2000-01-31 17:00:00"`, `2000-01-31T17:00:00-05:00`.
+               E.g.: 2000-01-31, "2000-01-31 17:00:00", 2000-01-31T17:00:00-05:00.
                If excluded, puzzle is open as soon as the tournament becomes active (e.g. the 2019 tournament's 'Additional' puzzles).
         end: The datetime that submissions to the round close. Same format as `start`.
              If excluded, puzzle is open until the tournament is ended (e.g. the 2019 tournament's 'Additional' puzzles).
@@ -210,7 +210,10 @@ class Tournament(commands.Cog):  # name="Help text name?"
             raise ValueError("Attached file should use the extension .puzzle")
 
         level_bytes = await puzzle_file.read()
-        level_code = level_bytes.decode("utf-8")
+        try:
+            level_code = level_bytes.decode("utf-8")
+        except UnicodeDecodeError as e:
+            raise Exception("Attachment must be a plaintext file (containing a level export code).") from e
         level = schem.Level(level_code)
 
         # Parse and check validity of start/end dates then rewrite them with UTC default ISO standard
@@ -250,8 +253,12 @@ class Tournament(commands.Cog):  # name="Help text name?"
             if round_dir.exists():
                 raise FileExistsError(f"Round directory {round_dir} already exists")
 
-            if level.name in tournament_metadata['rounds']:
-                raise ValueError(f"Puzzle with name `{level.name}` already exists in the current tournament")
+            # Check if any existing level or round name is too similar (since e.g. tournament-info accepts names in
+            # lower case)
+            if level.name.lower() in (cur_level_name.lower() for cur_level_name in tournament_metadata['rounds']):
+                raise ValueError(f"Puzzle with name ~= `{level.name}` already exists in the current tournament")
+            elif round_name.lower() in (cur_round['round_name'].lower() for cur_round in tournament_metadata['rounds'].values()):
+                raise ValueError(f"Round with name ~= `{round_name}` already exists in the current tournament")
 
             tournament_metadata['rounds'][level.name] = {'dir': round_dir_name,
                                                          'round_name': round_name,
@@ -260,15 +267,13 @@ class Tournament(commands.Cog):  # name="Help text name?"
             if end is not None:
                 tournament_metadata['rounds'][level.name]['end'] = end
 
+            # Set up the round directory
+            round_dir.mkdir()
+            await puzzle_file.save(round_dir / puzzle_file.filename)
+            (round_dir / 'solutions.txt').touch()
+
             with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
                 json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
-
-            round_dir.mkdir()
-
-            # Store the .puzzle file
-            puzzle_file.save(round_dir / puzzle_file.filename)
-
-            (round_dir / 'solutions.txt').touch()
 
             # TODO: Track the history of each player's scores over time and do cool graphs of everyone's metrics going
             #       down as the deadline approaches!
@@ -426,8 +431,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
     @commands.command(name='tournament-info')
     #@commands.dm_only()  # Prevent public channel spam and make sure TO can't accidentally leak current round results
-    async def tournament_info(self, ctx, puzzle_name=None):
-        """List information on the active tournament or if provided, the specified puzzle."""
+    async def tournament_info(self, ctx, *, puzzle_name=None):
+        """List information on the active tournament or if provided, the specified puzzle or round name."""
         # TODO: Accept round name as an alternative
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata()
 
@@ -449,9 +454,17 @@ class Tournament(commands.Cog):  # name="Help text name?"
             await ctx.send(embed=embed)
             return
 
-        # Make sure we return the same error message whether the puzzle doesn't exist or user doesn't have permission to
-        # see it, so future round names can't be inferred
-        puzzle_nonexistent_or_not_closed_exc = FileNotFoundError(f"Puzzle `{puzzle_name}` has not ended or does not exist")
+        # Accept round names and/or lower case
+        if puzzle_name not in tournament_metadata['rounds']:
+            lower_name = puzzle_name.lower()
+            for cur_puzzle_name, round_metadata in tournament_metadata['rounds'].items():
+                if lower_name == cur_puzzle_name.lower() or lower_name == round_metadata['round_name'].lower():
+                    puzzle_name = cur_puzzle_name
+                    break
+
+        # Make sure we return the same error message whether the puzzle/round doesn't exist or user doesn't have
+        # permission to see it, so future names can't be inferred
+        puzzle_nonexistent_or_not_closed_exc = FileNotFoundError(f"Puzzle/round `{puzzle_name}` has not ended or does not exist")
         if puzzle_name not in tournament_metadata['rounds']:
             raise puzzle_nonexistent_or_not_closed_exc
 
@@ -467,7 +480,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         # Prevent non-TO users from accessing rounds that haven't ended or that the bot hasn't announced the results of yet
         if 'end_post' in round_metadata:
             embed.description += f" | [Results]({round_metadata['end_post']})"
-        elif (await self.bot.is_owner(ctx.author)):
+        elif await self.bot.is_owner(ctx.author):
             # If this is the TO, calculate and append the current standings so they can keep an eye on its progress
 
             # TODO: Merge all the below code with the similar announce_tournament_results code
@@ -565,7 +578,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
                 puzzle_file = next(round_dir.glob('*.puzzle'), None)
                 if puzzle_file is None:
-                    raise FileNotFoundError(f"{round_dir} puzzle file not found")
+                    print(f"Error: {round_dir} puzzle file not found")
+                    continue
 
                 with open(puzzle_file, 'r', encoding='utf-8') as pf:
                     level_code = pf.read()
@@ -578,8 +592,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
                     title=f"Announcing {round_metadata['round_name']}, {puzzle_name}!",
                     #description=flavour_text, # TODO
                 )
-                announcement.add_field(name='',
-                                       value=f"[Preview]({CORANAC_SITE}?code={single_line_level_code})",
+                announcement.add_field(name='Preview',
+                                       value=f"[Coranac Site]({CORANAC_SITE}?code={single_line_level_code})",
                                        inline=True)
                 announcement.add_field(name='Metric', value=round_metadata['metric'], inline=True)
                 # Make the ISO datetime string friendlier-looking (e.g. no +00:00) or indicate puzzle is tournament-long
@@ -641,7 +655,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
                 puzzle_file = next(round_dir.glob('*.puzzle'), None)
                 if puzzle_file is None:
-                    raise FileNotFoundError(f"{round_dir} puzzle file not found")
+                    print(f"Error: {round_dir} puzzle file not found")
+                    continue
                 with open(puzzle_file, encoding='utf-8') as pf:
                     level_code = pf.read()
 
