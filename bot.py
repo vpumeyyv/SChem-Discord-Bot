@@ -262,8 +262,9 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
             tournament_metadata['rounds'][level.name] = {'dir': round_dir_name,
                                                          'round_name': round_name,
-                                                         'start': start,
-                                                         'metric': metric, 'total_points': total_points}
+                                                         'metric': metric,
+                                                         'total_points': total_points,
+                                                         'start': start}
             if end is not None:
                 tournament_metadata['rounds'][level.name]['end'] = end
 
@@ -305,7 +306,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         assert len(ctx.message.attachments) == 1, "Expected one attached solution file!"
         soln_bytes = await ctx.message.attachments[0].read()
         try:
-            soln_str = soln_bytes.decode("utf-8")
+            soln_str = soln_bytes.decode("utf-8").replace('\r\n', '\n')
         except UnicodeDecodeError as e:
             raise Exception("Attachment must be a plaintext file (containing a Community Edition export).") from e
 
@@ -420,7 +421,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
         with open(round_dir / 'solutions.txt', 'w', encoding='utf-8') as f:
             # Make sure not to write windows newlines or python will double the carriage returns
-            f.write('\n'.join(new_soln_strs).replace('\r\n', '\n'))
+            f.write('\n'.join(new_soln_strs))
 
         # TODO: Update submissions_history.txt with time, name, score, and blurb
 
@@ -582,9 +583,9 @@ class Tournament(commands.Cog):  # name="Help text name?"
                     continue
 
                 with open(puzzle_file, 'r', encoding='utf-8') as pf:
-                    level_code = pf.read()
+                    level_code = pf.read()  # Note: read() converts any windows newlines to unix newlines
 
-                single_line_level_code = level_code.replace('\r', '').replace('\n', '')
+                single_line_level_code = level_code.replace('\n', '')
 
                 # Discord's embeds seem to be the only way to do a hyperlink to hide the giant puzzle preview link
                 announcement = discord.Embed(
