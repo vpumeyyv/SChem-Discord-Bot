@@ -339,7 +339,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
                                                          'start': start,
                                                          'end': end}
 
-            # TODO: Re-sort rounds by start date
+            # Re-sort rounds by start date
+            tournament_metadata['rounds'] = dict(sorted(tournament_metadata['rounds'].items(), key=x[1]['start']))
 
             # Set up the round directory
             round_dir.mkdir()
