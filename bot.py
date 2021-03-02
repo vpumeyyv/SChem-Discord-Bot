@@ -217,17 +217,20 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
         return self.ranking_str(('Name', 'Score'), standings.items(), desc=True)
 
-    @commands.command(name='tournament-start')
+    # Note: Command docstrings should be limited to ~80 characters to avoid ugly wraps in any reasonably-sized window
+
+    @commands.command(name='tournament-create')
     # TODO: Commented out all the public channel / permissions command lock decorators for debugging since doing so
     #       dynamically on --debug seems difficult - uncomment them!
     #@commands.is_owner()  # TODO: @commands.has_role('tournament-host')
     async def tournament_create(self, ctx, name, start, end):
-        """Create a tournament. There may only be one pending tournament at a time.
-        Args:
-            name: The tournament's official name, e.g. "2021 SpaceChem Tournament"
-            start: The date that the bot will announce the tournament publicly and after which puzzle rounds may start.
-            end: The date that the bot will announce the tournament results, after closing and tallying the results of
-                 any still-open puzzles.
+        """Create a tournament. There may only be one pending/active at a time.
+
+        name: The tournament's official name, e.g. "2021 SpaceChem Tournament"
+        start: The date that the bot will announce the tournament publicly and
+               after which puzzle rounds may start.
+        end: The date that the bot will announce the tournament results, after
+             closing and tallying the results of any still-open puzzles.
         """
         tournament_dir_name = slugify(name)  # Convert to a valid directory name
         assert tournament_dir_name, f"Invalid tournament name {name}"
@@ -264,20 +267,28 @@ class Tournament(commands.Cog):  # name="Help text name?"
     @commands.command(name='tournament-add-puzzle')
     #@commands.is_owner()  # TODO: @commands.has_role('tournament-host')
     #@commands.dm_only()
-    async def tournament_add_puzzle(self, ctx, round_name, metric, total_points: int, start=None, end=None):
+    async def tournament_add_puzzle(self, ctx, round_name, metric, total_points: int, start, end=None):
         """Add the attached puzzle file as a new round of the tournament.
 
         round_name: e.g. "Round 1" or "Bonus 1".
-        metric: The equation that will govern the raw score of a player's submission. A player's final score for the round will be the top metric score divided by this metric score.
-                Allowed terms: <Any real number>, cycles, reactors, symbols, waldopath, waldos, bonders, arrows, flip_flops, sensors, syncs.
-                Allowed operators/fns: max(), min(), ^ (or **), /, *, +, -. Parsed with standard operator precedence (BEDMAS).
+        metric: The equation a player should minimize.
+                A player's final score for the round will be the top metric
+                score divided by this metric score.
+                Allowed terms: <Any real number>, cycles, reactors, symbols,
+                               waldopath, waldos, bonders, arrows, flip_flops,
+                               sensors, syncs.
+                Allowed operators/fns: max(), min(), ^ (or **), /, *, +, -.
+                Parsed with standard operator precedence (BEDMAS).
                 E.g.: "cycles + 0.1 * symbols + bonders^2"
-        total_points: Number of points that the first place player of the round will receive.
-        start: The datetime that submissions to the round open, in ISO format. If timezone unspecified, assumed to be UTC.
+        total_points: # of points that the first place player will receive.
+                      Other players will get points proportional to this based
+                      on their relative metric score.
+        start: The datetime that round submissions open, in ISO format.
+               If timezone unspecified, assumed to be UTC.
                E.g.: 2000-01-31, "2000-01-31 17:00:00", 2000-01-31T17:00:00-05:00.
-               If excluded, puzzle is open as soon as the tournament becomes active (e.g. the 2019 tournament's 'Additional' puzzles).
-        end: The datetime that submissions to the round close. Same format as `start`.
-             If excluded, puzzle is open until the tournament is ended (e.g. the 2019 tournament's 'Additional' puzzles).
+        end: The datetime that round submissions close. Same format as `start`.
+             If excluded, puzzle is open until the tournament is ended (e.g. the
+             2019 tournament's 'Additional' puzzles).
         """
         # Check attached puzzle
         assert len(ctx.message.attachments) == 1, "Expected one attached puzzle file!"
@@ -300,13 +311,10 @@ class Tournament(commands.Cog):  # name="Help text name?"
         async with self.tournament_metadata_write_lock:
             tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata()
 
-            if start is not None:
-                start_dt = self.parse_datetime_str(start)
-                tournament_start_dt = datetime.fromisoformat(tournament_metadata['start'])
-                if start_dt < tournament_start_dt:
-                    raise ValueError(f"Round start time is before tournament start time ({tournament_start_dt.isoformat()}).")
-            else:
-                start_dt = datetime.now(timezone.utc)
+            start_dt = self.parse_datetime_str(start)
+            tournament_start_dt = datetime.fromisoformat(tournament_metadata['start'])
+            if start_dt < tournament_start_dt:
+                raise ValueError(f"Round start time is before tournament start time ({tournament_start_dt.isoformat()}).")
             start = start_dt.isoformat()
 
             if end is not None:
@@ -375,7 +383,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
     #@commands.dm_only()  # TODO: Give the bot permission to delete !tournament-submit messages from public channels
                           #       since someone will inevitably forget to use DMs
     async def tournament_submit(self, ctx):
-        """Submit the attached solution file to the matching active tournament puzzle."""
+        """Submit the attached solution file to the matching tournament puzzle."""
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata()
 
         assert len(ctx.message.attachments) == 1, "Expected one attached solution file!"
@@ -508,7 +516,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
     @commands.command(name='tournament-info')
     #@commands.dm_only()  # Prevent public channel spam and make sure TO can't accidentally leak current round results
     async def tournament_info(self, ctx, *, puzzle_name=None):
-        """List information on the active tournament or if provided, the specified puzzle or round name."""
+        """List info on the active tournament or if provided, the specified puzzle or round name."""
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata()
 
         if puzzle_name is None:

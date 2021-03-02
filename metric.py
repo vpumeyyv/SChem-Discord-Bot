@@ -139,7 +139,7 @@ def ast_vars(node):
     elif isinstance(node, ast.UnaryOp):
         return ast_vars(node.operand)
     elif isinstance(node, ast.Call):
-        return set().union(ast_vars(arg) for arg in node.args)
+        return set().union(*(ast_vars(arg) for arg in node.args))
     else:
         raise TypeError(node)
 
@@ -154,7 +154,11 @@ def ast_operators(node):
     elif isinstance(node, ast.UnaryOp):
         return set((type(node.op),)) | ast_operators(node.operand)
     elif isinstance(node, ast.Call):
-        return set((node.func.id,)).union(ast_vars(arg) for arg in node.args)
+        # Ensure the call has at least one arg
+        if not node.args:
+            raise ValueError(f"Missing args to {node.func.id}")
+
+        return set((node.func.id,)).union(*(ast_operators(arg) for arg in node.args))
     else:
         raise TypeError(node)
 
