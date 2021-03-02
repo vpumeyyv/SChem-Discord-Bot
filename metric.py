@@ -16,13 +16,13 @@ METRIC_OPS = {ast.Pow: op.pow, ast.USub: op.neg, ast.Mult: op.mul, ast.Div: op.t
 METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                     'reactors': lambda soln: soln.expected_score.reactors,
                     'symbols': lambda soln: soln.expected_score.symbols,
-                    'waldopath': lambda soln: waldopath(soln),
                     'waldos': lambda soln: waldos(soln),
+                    'waldopath': lambda soln: waldopath(soln),
                     'bonders': lambda soln: used_bonders(soln),
                     'arrows': lambda soln: num_arrows(soln),
                     'flip_flops': lambda soln: num_instrs_of_type(soln, InstructionType.FLIP_FLOP),
-                    'syncs': lambda soln: num_instrs_of_type(soln, InstructionType.SYNC),
-                    'sensors': lambda soln: num_instrs_of_type(soln, InstructionType.SENSE),}
+                    'sensors': lambda soln: num_instrs_of_type(soln, InstructionType.SENSE),
+                    'syncs': lambda soln: num_instrs_of_type(soln, InstructionType.SYNC)}
                     # TODO: 'outputs': lambda soln: completed_outputs(soln)
                     #       requires modifications to tournament validator to accept solutions without an expected
                     #       score if the metric contains 'outputs', and to eval the metric even if the solution crashes
@@ -100,10 +100,10 @@ def used_bonders(soln):
     num_used_bonders = 0
     for reactor in soln.reactors:
         # TODO: These weren't really meant to be user-exposed, relying on them is a bit sus
-        used_bonders = set(p1 for p1, _, _, in reactor.bonder_plus_pairs)
-        used_bonders |= set(p2 for _, p2, _, in reactor.bonder_plus_pairs)
-        used_bonders |= set(p1 for p1, _, _, in reactor.bonder_minus_pairs)
-        used_bonders |= set(p2 for _, p2, _, in reactor.bonder_minus_pairs)
+        used_bonders = set(p1 for p1, _, _, in reactor.bond_plus_pairs)
+        used_bonders |= set(p2 for _, p2, _, in reactor.bond_plus_pairs)
+        used_bonders |= set(p1 for p1, _, _, in reactor.bond_minus_pairs)
+        used_bonders |= set(p2 for _, p2, _, in reactor.bond_minus_pairs)
         num_used_bonders += len(used_bonders)
 
     return num_used_bonders
@@ -174,9 +174,10 @@ def validate_metric(metric_str):
         if metric_var not in METRIC_VAR_TO_FN:
             raise ValueError(f"Unknown var `{metric_var}` in metric equation.")
 
-def eval_metric(soln, metric_str):
+def get_metric_and_terms(soln, metric_str):
     """Score the (assumed to be already-validated) given solution using the given metric expression. Respects python's
     usual order of operations (i.e. BEDMAS).
+    Return the score along with a dict of the value for each term in the metric.
     Valid ops: +, -, *, /, ** or ^
     Valid terms: any real number, or any of:
         cycles, reactors, symbols: Per usual.
@@ -189,10 +190,23 @@ def eval_metric(soln, metric_str):
     # Parse the metric into an AST
     ast_tree = ast.parse(metric_str, mode='eval').body
 
-    # Calculate all variables the metric needs
-    vars_dict = {var: METRIC_VAR_TO_FN[var](soln) for var in ast_vars(ast_tree)}
+    # Calculate all variables the metric needs. Sorted in same order as they appear in METRIC_VAR_TO_FN
+    # (this is the order they'll appear as column in results announcements)
+    used_vars = ast_vars(ast_tree)
+    vars_dict = {var: METRIC_VAR_TO_FN[var](soln) for var in METRIC_VAR_TO_FN.keys() if var in used_vars}
 
-    return eval_ast(ast_tree, vars_dict)
+    return eval_ast(ast_tree, vars_dict), vars_dict
+
+def eval_metric(soln, metric_str):
+    """Score the (assumed to be already-validated) given solution using the given metric expression. Respects python's
+    usual order of operations (i.e. BEDMAS). Return the score.
+    Valid ops: +, -, *, /, ** or ^
+    Valid terms: any real number, or any of:
+        cycles, reactors, symbols: Per usual.
+        waldos: Number of non-empty waldos in the solution.
+        waldopath: Number of reactor cells crossed by a waldopath
+    """
+    return get_metric_and_terms(soln, metric_str)[0]
 
 def eval_ast(node, vars_dict):
     """Helper for evaluating a puzzle metric (safer than built-in eval)"""
