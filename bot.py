@@ -277,7 +277,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 Allowed terms: <Any real number>, cycles, reactors, symbols,
                                waldopath, waldos, bonders, arrows, flip_flops,
                                sensors, syncs.
-                Allowed operators/fns: max(), min(), ^ (or **), /, *, +, -.
+                Allowed operators/fns: ^ (or **), /, *, +, -, max(), min(),
+                                       log() (base 10)
                 Parsed with standard operator precedence (BEDMAS).
                 E.g.: "cycles + 0.1 * symbols + bonders^2"
         total_points: # of points that the first place player will receive.

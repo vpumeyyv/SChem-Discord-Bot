@@ -4,6 +4,8 @@
 "Contains functions for parsing tournament metric equations."
 
 import ast
+import inspect
+import math
 import operator as op
 
 from schem.waldo import InstructionType
@@ -11,7 +13,8 @@ from schem.components import Reactor
 
 # Operators allowed in puzzle metric strings
 METRIC_OPS = {ast.Pow: op.pow, ast.USub: op.neg, ast.Mult: op.mul, ast.Div: op.truediv, ast.Add: op.add, ast.Sub: op.sub,
-              'max': max, 'min': min}
+              # Built-in functions must be wrapped since otherwise they don't provide arg-count inspection info
+              'log': lambda x: math.log(x, base=10), 'max': lambda *x: max(*x), 'min': lambda *x: min(*x)}
 # Functions for calculating values in a metric equation, given a Solution object
 METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                     'reactors': lambda soln: soln.expected_score.reactors,
@@ -144,19 +147,23 @@ def ast_vars(node):
         raise TypeError(node)
 
 def ast_operators(node):
-    """Return a set of all operators and calls in the given AST."""
-    if isinstance(node, ast.Name):
-        return set()
-    elif isinstance(node, ast.Num):
+    """Return a set of all operators and calls in the given AST, or return an error if any are invalid."""
+    if isinstance(node, ast.Name) or isinstance(node, ast.Num):
         return set()
     elif isinstance(node, ast.BinOp):
         return set((type(node.op),)) | ast_operators(node.left) | ast_operators(node.right)
     elif isinstance(node, ast.UnaryOp):
         return set((type(node.op),)) | ast_operators(node.operand)
     elif isinstance(node, ast.Call):
-        # Ensure the call has at least one arg
-        if not node.args:
-            raise ValueError(f"Missing args to {node.func.id}")
+        if node.func.id not in METRIC_OPS:
+            raise ValueError(f"Unknown fn `{node.func.id}` in metric equation.")
+
+        # Make sure the number of args matches the fn signature
+        fn_argspec = inspect.getfullargspec(METRIC_OPS[node.func.id])
+        if (not node.args or
+                (fn_argspec.varargs is None and fn_argspec.varkw is None
+                 and len(node.args) != len(fn_argspec.args))):
+            raise ValueError(f"Unexpected number of args to {node.func.id}")
 
         return set((node.func.id,)).union(*(ast_operators(arg) for arg in node.args))
     else:
