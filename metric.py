@@ -14,7 +14,7 @@ from schem.components import Reactor
 # Operators allowed in puzzle metric strings
 METRIC_OPS = {ast.Pow: op.pow, ast.USub: op.neg, ast.Mult: op.mul, ast.Div: op.truediv, ast.Add: op.add, ast.Sub: op.sub,
               # Built-in functions must be wrapped since otherwise they don't provide arg-count inspection info
-              'log': lambda x: math.log(x, base=10), 'max': lambda *x: max(*x), 'min': lambda *x: min(*x)}
+              'log': lambda x: math.log(x, 10), 'max': lambda *x: max(*x), 'min': lambda *x: min(*x)}
 # Functions for calculating values in a metric equation, given a Solution object
 METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                     'reactors': lambda soln: soln.expected_score.reactors,
@@ -232,6 +232,6 @@ def eval_ast(node, vars_dict):
     elif isinstance(node, ast.UnaryOp):
         return METRIC_OPS[type(node.op)](eval_ast(node.operand, vars_dict))
     elif isinstance(node, ast.Call):
-        return METRIC_OPS[node.func.id](eval_ast(arg, vars_dict) for arg in node.args)
+        return METRIC_OPS[node.func.id](*(eval_ast(arg, vars_dict) for arg in node.args))
     else:
         raise TypeError(node)
