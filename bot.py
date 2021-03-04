@@ -539,7 +539,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         metric = round_metadata['metric']
         soln_metric_score = eval_metric(solution, metric)
 
-        reply = f"Successfully validated {soln_descr}, metric score: {format_metric(soln_metric_score, decimals=1)}"
+        reply = f"Successfully validated {soln_descr}, metric score: {format_metric(soln_metric_score, decimals=3)}"
 
         # Update solutions.txt
         # TODO: Could maybe do a pure file-append on user's first submission to save computation, but probably won't
@@ -558,7 +558,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 #       modify the metric after the puzzle opens if necessary
                 old_metric_score = eval_metric(schem.Solution(level, cur_soln_str), metric)
                 if soln_metric_score > old_metric_score:
-                    reply += f"\nWarning: This solution regresses your last submission's metric score, previously: {old_metric_score}"
+                    reply += "\nWarning: This solution regresses your last submission's metric score, previously: " \
+                             + format_metric(old_metric_score, decimals=3)
             else:
                 new_soln_strs.append(cur_soln_str)
 
