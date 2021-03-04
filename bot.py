@@ -95,6 +95,54 @@ async def run(ctx):
 #     # Auto-fetch pastebin link from youtube video description
 
 
+class PuzzleSubmissionsLock:
+    """Context manager which allows any number of submitters to a puzzle, until lock_and_wait_for_submitters is called,
+    (`await puzzle_submission_lock.lock_and_wait_for_submitters()`), at which point new context
+    requesters will receive an exception and the caller will wait for current submissions to finish.
+    The lock will remain permanently locked once lock_and_wait_for_submitters() has been called (current
+    users: puzzle results announcer and puzzle deleter).
+    """
+    # TODO: Keep metadata and/or other tournament files in memory to avoid excess file-reads (but still write to files)
+    def __init__(self):
+        self.num_submitters = 0
+        self.is_closed = False  # Raise exception in __aenter__ if set?
+        self.is_blocker = False
+        self.no_submissions_in_progress = asyncio.Event()
+        self.no_submissions_in_progress.set()  # Set right away since no submitters to start
+
+    async def lock_and_wait_for_submitters(self):
+        """Permanently block new submitters from opening the context and wait for all current submitters to finish.
+        May only be called once.
+        """
+        if self.is_closed:
+            raise Exception("This puzzle has already been locked!")
+
+        self.is_closed = True
+        await self.no_submissions_in_progress.wait()  # Wait for all current submitters to exit their contexts
+
+    def __enter__(self):
+        """Raise an exception if lock_and_wait_for_submitters() has already been called, else register as a submitter
+        and enter the context.
+        """
+        # Note that submissions check more precisely against puzzle end time, as long as we make it wait ~5 seconds to
+        # ensure the async loop has time to call every pre-deadline submit, the results announcer should never be able
+        # to block submitters (since they should check message time and grab the lock immediately)
+        if self.is_closed:
+            raise Exception("Puzzle has been closed or deleted")
+
+        self.num_submitters += 1
+        self.no_submissions_in_progress.clear()  # Anyone waiting for all submissions to complete will now be blocked
+
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Unregister as a submitter and indicate to any listeners if there are now no remaining submitters."""
+        self.num_submitters -= 1
+        if self.num_submitters == 0:
+            # Indicate that any wait_and_block caller may open the context
+            self.no_submissions_in_progress.set()
+
+
 class Tournament(commands.Cog):  # name="Help text name?"
     """Tournament Commands"""
 
@@ -108,6 +156,12 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
     def __init__(self, bot):
        self.bot = bot
+
+       # Create submissions locks for all open rounds of the current tournament
+       _, tournament_metadata = self.get_active_tournament_dir_and_metadata()
+       self.puzzle_submission_locks = {puzzle_name: PuzzleSubmissionsLock()
+                                       for puzzle_name, round_metadata in tournament_metadata['rounds'].items()
+                                       if 'start_post' in round_metadata and 'end_post' not in round_metadata}
 
        # Start bot's looping tasks
        self.announce_starts.start()
@@ -170,7 +224,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
     # Note: Command docstrings should be limited to ~80 characters to avoid ugly wraps in any reasonably-sized window
 
     @commands.command(name='tournament-create')
-    # TODO: Commented out all the public channel / permissions command lock decorators for debugging since doing so
+    # TODO: Commented out all the DM-only command lock decorators for debugging since doing so
     #       dynamically on --debug seems difficult - uncomment them!
     @commands.is_owner()  # TODO: @commands.has_role('tournament-host')
     async def tournament_create(self, ctx, name, start, end):
@@ -283,6 +337,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         await ctx.send(reply)
 
     # TODO: @commands.command(name='tournament-delete')  # Is this existing too dangerous?
+    #                                                    # In any case tournament-update should besufficient for now
 
     def get_puzzle_name(self, tournament_metadata, round_or_puzzle_name):
         """Given a string, return the puzzle name for any puzzle/round matching it case-insensitively, else None."""
@@ -407,15 +462,18 @@ class Tournament(commands.Cog):  # name="Help text name?"
             round_dir = tournament_dir / round_metadata['dir']
             round_name = round_metadata['round_name']
 
+            msg = None
+
             # Ask for confirmation before deleting if the round start date has passed
             if datetime.now(timezone.utc).isoformat() > round_metadata['start']:
                 timeout_seconds = 30
-                msg = await ctx.send(f"This round's start date ({round_metadata['start']}) has already passed and"
-                                     + " deleting it may remove player solutions. Are you sure you wish to delete it?"
-                                     + f"\nReact to this message with ✅ within {timeout_seconds} seconds to proceed.")
+                warn_msg = await ctx.send(
+                    f"This round's start date ({round_metadata['start']}) has already passed and"
+                    + " deleting it may remove player solutions. Are you sure you wish to delete it?"
+                    + f"\nReact to this message with ✅ within {timeout_seconds} seconds to proceed.")
 
                 def check(reaction, user):
-                    return reaction.message.id == msg.id and str(reaction.emoji) == '✅'
+                    return reaction.message.id == warn_msg.id and str(reaction.emoji) == '✅'
 
                 try:
                     await self.bot.wait_for('reaction_add', timeout=timeout_seconds, check=check)
@@ -423,13 +481,19 @@ class Tournament(commands.Cog):  # name="Help text name?"
                     await ctx.send('Puzzle not deleted!')
                     return
 
+                # TODO: Should deleting an already-closed puzzle be allowed?
+                if puzzle_name in self.puzzle_submission_locks:
+                    msg = await ctx.send(f"Waiting for any current submitters...")
+                    await self.puzzle_submission_locks[puzzle_name].lock_and_wait_for_submitters()
+                    del self.puzzle_submission_locks[puzzle_name]
+
             shutil.rmtree(round_dir)
             del tournament_metadata['rounds'][puzzle_name]
 
             with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
                 json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
 
-        await ctx.send(f"Successfully deleted {round_name}, `{puzzle_name}`")
+        await (ctx.send if msg is None else msg.edit)(f"Successfully deleted {round_name}, `{puzzle_name}`")
 
     # TODO: tournament-update-puzzle? Probably not worth the complexity since depending on what updates old solutions
     #       may or not be invalidated. TO should just warn participants they'll need to resubmit, delete, re-add, and
@@ -510,64 +574,63 @@ class Tournament(commands.Cog):  # name="Help text name?"
         elif msg_time > datetime.fromisoformat(round_metadata['end']):
             raise Exception(f"Submissions for `{level_name}` have closed.")
 
-        # TODO: Check if the tournament host set a higher max submission cycles value, otherwise default to e.g. 10,000,000
-        #       and break here if that's violated
+        # TODO: Check if the tournament host set a higher max submission cycles value, otherwise default to e.g.
+        #       10,000,000 and break here if that's violated
 
-        puzzle_file = next(round_dir.glob('*.puzzle'), None)
-        if puzzle_file is None:
-            print(f"Error: {round_dir} puzzle file not found!")
-            raise FileNotFoundError("Round puzzle file not found; I seem to be experiencing an error.")
+        with self.puzzle_submission_locks[level_name]:
+            puzzle_file = next(round_dir.glob('*.puzzle'), None)
+            if puzzle_file is None:
+                print(f"Error: {round_dir} puzzle file not found!")
+                raise FileNotFoundError("Round puzzle file not found; I seem to be experiencing an error.")
 
-        with open(puzzle_file, 'r', encoding='utf-8') as f:
-            level_code = f.read()
+            with open(puzzle_file, 'r', encoding='utf-8') as f:
+                level_code = f.read()
 
-        # Verify the solution
-        # TODO: Provide seconds or minutes ETA based on estimate of 2,000,000 cycles / min (/ reactor?)
-        msg = await ctx.send(f"Running {soln_descr}, this should take < 30s barring an absurd cycle count...")
+            # Verify the solution
+            # TODO: Provide seconds or minutes ETA based on estimate of 2,000,000 cycles / min (/ reactor?)
+            msg = await ctx.send(f"Running {soln_descr}, this should take < 30s barring an absurd cycle count...")
 
-        level = schem.Level(level_code)
-        solution = schem.Solution(level, soln_str)
+            level = schem.Level(level_code)
+            solution = schem.Solution(level, soln_str)
 
-        # Call the SChem validator in a thread so the bot isn't blocked
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(thread_pool_executor, solution.validate)
+            # Call the SChem validator in a thread so the bot isn't blocked
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(thread_pool_executor, solution.validate)
 
-        # TODO: if metric uses 'outputs' as a var, we should instead catch any run errors (or just PauseException, to taste)
-        #       and pass the post-run solution object to eval_metric regardless
+            # TODO: if metric uses 'outputs' as a var, we should instead catch any run errors (or just PauseException,
+            #       to taste) and pass the post-run solution object to eval_metric regardless
 
-        # Calculate the solution's metric score
-        metric = round_metadata['metric']
-        soln_metric_score = eval_metric(solution, metric)
+            # Calculate the solution's metric score
+            metric = round_metadata['metric']
+            soln_metric_score = eval_metric(solution, metric)
 
-        reply = f"Successfully validated {soln_descr}, metric score: {format_metric(soln_metric_score, decimals=3)}"
+            reply = f"Successfully validated {soln_descr}, metric score: {format_metric(soln_metric_score, decimals=3)}"
 
-        # Update solutions.txt
-        # TODO: Could maybe do a pure file-append on user's first submission to save computation, but probably won't
-        #       be a bottleneck
-        with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as f:
-            solns_str = f.read()
+            # Update solutions.txt
+            with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as f:
+                solns_str = f.read()
 
-        new_soln_strs = []
-        for cur_soln_str in schem.Solution.split_solutions(solns_str):
-            _, cur_author, last_score, _ = schem.Solution.parse_metadata(cur_soln_str)
-            if cur_author == author:
-                # Warn the user if their submission regresses the metric score
-                # (we will still allow the submission in case they wanted to submit something sub-optimal for
-                #  style/meme/whatever reasons)
-                # Note: This re-does the work of calculating the old metric but is simpler and allows the TO to
-                #       modify the metric after the puzzle opens if necessary
-                old_metric_score = eval_metric(schem.Solution(level, cur_soln_str), metric)
-                if soln_metric_score > old_metric_score:
-                    reply += "\nWarning: This solution regresses your last submission's metric score, previously: " \
-                             + format_metric(old_metric_score, decimals=3)
-            else:
-                new_soln_strs.append(cur_soln_str)
+            new_soln_strs = []
+            for cur_soln_str in schem.Solution.split_solutions(solns_str):
+                _, cur_author, last_score, _ = schem.Solution.parse_metadata(cur_soln_str)
+                if cur_author == author:
+                    # Warn the user if their submission regresses the metric score
+                    # (we will still allow the submission in case they wanted to submit something sub-optimal for
+                    #  style/meme/whatever reasons)
+                    # Note: This re-does the work of calculating the old metric but is simpler and allows the TO to
+                    #       modify the metric after the puzzle opens if necessary
+                    old_metric_score = eval_metric(schem.Solution(level, cur_soln_str), metric)
+                    if soln_metric_score > old_metric_score:
+                        reply += "\nWarning: This solution regresses your last submission's metric score, previously: " \
+                                 + format_metric(old_metric_score, decimals=3)
+                else:
+                    new_soln_strs.append(cur_soln_str)
 
-        new_soln_strs.append(soln_str)
+            new_soln_strs.append(soln_str)
 
-        with open(round_dir / 'solutions.txt', 'w', encoding='utf-8') as f:
-            # Make sure not to write windows newlines or python will double the carriage returns
-            f.write('\n'.join(new_soln_strs))
+            with open(round_dir / 'solutions.txt', 'w', encoding='utf-8') as f:
+                # Make sure not to write windows newlines or python will double the carriage returns
+                f.write('\n'.join(new_soln_strs))
 
         # TODO: Update submissions_history.txt with time, name, score, and blurb
 
@@ -735,6 +798,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 # Keep the link to the original announcement post for !tournament-info. We can also check this to know
                 # whether we've already done an announcement post
                 round_metadata['start_post'] = msg.jump_url
+                self.puzzle_submission_locks[puzzle_name] = PuzzleSubmissionsLock()
 
             with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as tm_f:
                 json.dump(tournament_metadata, tm_f, ensure_ascii=False, indent=4)
@@ -791,7 +855,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         level = schem.Level(level_code)
         solutions = [schem.Solution(level, soln_str) for soln_str in schem.Solution.split_solutions(solns_str)]
 
-        # TODO: Shouldn't need a solution to parse the header row, extract these from the metric
+        # TODO: Shouldn't need a solution to parse the header row; extract these from the metric
         if not solutions:
             return '#  Name  Cycles  Reactors  Symbols  Metric  Rel. Metric  Points', {}
 
@@ -836,24 +900,24 @@ class Tournament(commands.Cog):  # name="Help text name?"
         async with self.tournament_metadata_write_lock:
             tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
 
-            # Announce the end of any round that ended over 15 min to 1:15 min ago and hasn't already has its end ennounced
-            # The 15 minute delay is to give time for any last-minute submissions to be validated
-            # TODO: Use some aync locks or some other proper way to ensure all submissions are done processing, without
-            #       needing a hard-coded delay
+            # Announce the end of any round that ended within the last hour and hasn't already has its end ennounced
+            # The 5 second delay is to give time for any pre-deadline submit calls to finish grabbing the puzzle's
+            # submissions lock. This is okay since submit checks the datetime itself anyway before grabbing the lock.
             # The hour limit is just to make sure the bot doesn't spam old announcements if something goes nutty
             cur_time = datetime.now(timezone.utc)
             for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
                 end_dt = datetime.fromisoformat(round_metadata['end'])
                 seconds_since_end = (cur_time - end_dt).total_seconds()
-                if 'end_post' in round_metadata or not 900 <= seconds_since_end <= 4500: # 15 min to 1 hour 15 min
+                if 'end_post' in round_metadata or not 5 <= seconds_since_end <= 3605:
                     # If the hour announcement window has passed and the results post was never made, log a warning
-                    if 'end_post' not in round_metadata and seconds_since_end > 4500:
+                    if 'end_post' not in round_metadata and seconds_since_end > 3605:
                         # This will spam the log but only 96 times a day... indefinitely
-                        print(f"Error: Puzzle {puzzle_name} has ended but results were not announced right afterward")
+                        print(f"Error: Puzzle {puzzle_name} has ended but results were not announced within an hour")
                     continue
 
                 print(f"Announcing {puzzle_name} results")
                 try:
+                    await self.puzzle_submission_locks[puzzle_name].lock_and_wait_for_submitters()
                     results_str, standings_delta = self.get_round_results(tournament_dir, tournament_metadata, puzzle_name)
                 except Exception as e:
                     print(e)
@@ -879,8 +943,11 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
                 # TODO: Also attach blurbs.txt
 
+                solns_file = tournament_dir / round_metadata['dir'] / 'solutions.txt'
                 msg = await channel.send(announcement, file=discord.File(str(solns_file), filename=solns_file.name))
                 round_metadata['end_post'] = msg.jump_url
+
+                del self.puzzle_submission_locks[puzzle_name]
 
             # If the tournament has ended, also announce the tournament results
             end_dt = datetime.fromisoformat(tournament_metadata['end'])
