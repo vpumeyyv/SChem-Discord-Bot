@@ -158,10 +158,11 @@ class Tournament(commands.Cog):  # name="Help text name?"
        self.bot = bot
 
        # Create submissions locks for all open rounds of the current tournament
-       _, tournament_metadata = self.get_active_tournament_dir_and_metadata()
-       self.puzzle_submission_locks = {puzzle_name: PuzzleSubmissionsLock()
-                                       for puzzle_name, round_metadata in tournament_metadata['rounds'].items()
-                                       if 'start_post' in round_metadata and 'end_post' not in round_metadata}
+       if self.ACTIVE_TOURNAMENT_FILE.exists():
+           _, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
+           self.puzzle_submission_locks = {puzzle_name: PuzzleSubmissionsLock()
+                                           for puzzle_name, round_metadata in tournament_metadata['rounds'].items()
+                                           if 'start_post' in round_metadata and 'end_post' not in round_metadata}
 
        # Start bot's looping tasks
        self.announce_starts.start()
@@ -756,7 +757,9 @@ class Tournament(commands.Cog):  # name="Help text name?"
         async with self.tournament_metadata_write_lock:
             tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
 
-            # Announce the tournament if it just started
+            cur_time = datetime.now(timezone.utc)
+
+            # Announce the tournament if it just started and hasn't already been announced
             if 'start_post' not in tournament_metadata:
                 start_dt = datetime.fromisoformat(tournament_metadata['start'])
                 seconds_since_start = (cur_time - start_dt).total_seconds()
@@ -767,11 +770,10 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
                     msg = await channel.send(announcement)
                     tournament_metadata['start_post'] = msg.jump_url
-                elif seconds_since_start > 4500:
+                elif seconds_since_start > 3600:
                     print(f"Error: `{tournament_metadata['name']}` has started but it was not announced within an hour")
 
             # Announce any round that started in the last hour and hasn't already been anounced
-            cur_time = datetime.now(timezone.utc)
             for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
                 # Ignore round if it was already announced or didn't open for submissions in the last hour.
                 # The hour limit is to ensure the bot doesn't spam too many announcements if something goes nutty,
