@@ -897,22 +897,20 @@ class Tournament(commands.Cog):  # name="Help text name?"
         await self.bot.wait_until_ready()  # Looks awkward but apparently get_channel can return None if bot isn't ready
         channel = self.bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
 
+        # A small delay of a few seconds before locking and waiting for remaining puzzle submissions, to forgive
+        # discrepencies in clock times and the order that async tasks are called
+        deadline_leeway_seconds = 5
+
         async with self.tournament_metadata_write_lock:
             tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
 
-            # Announce the end of any round that ended within the last hour and hasn't already has its end ennounced
+            # Announce the end of any round that ended and hasn't already has its end ennounced
             # The 5 second delay is to give time for any pre-deadline submit calls to finish grabbing the puzzle's
             # submissions lock. This is okay since submit checks the datetime itself anyway before grabbing the lock.
-            # The hour limit is just to make sure the bot doesn't spam old announcements if something goes nutty
             cur_time = datetime.now(timezone.utc)
             for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
                 end_dt = datetime.fromisoformat(round_metadata['end'])
-                seconds_since_end = (cur_time - end_dt).total_seconds()
-                if 'end_post' in round_metadata or not 5 <= seconds_since_end <= 3605:
-                    # If the hour announcement window has passed and the results post was never made, log a warning
-                    if 'end_post' not in round_metadata and seconds_since_end > 3605:
-                        # This will spam the log but only 96 times a day... indefinitely
-                        print(f"Error: Puzzle {puzzle_name} has ended but results were not announced within an hour")
+                if 'end_post' in round_metadata or not (cur_time - end_dt).total_seconds() >= deadline_leeway_seconds:
                     continue
 
                 print(f"Announcing {puzzle_name} results")
@@ -951,8 +949,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
             # If the tournament has ended, also announce the tournament results
             end_dt = datetime.fromisoformat(tournament_metadata['end'])
-            seconds_since_end = (cur_time - end_dt).total_seconds()
-            if 900 <= seconds_since_end <= 4500:
+            if (cur_time - end_dt).total_seconds() >= deadline_leeway_seconds:
                 print("Announcing tournament results")
                 announcement = f"{tournament_metadata['name']} Results"
                 announcement += f"\n```\n{self.standings_str(tournament_dir)}\n```"
@@ -961,8 +958,6 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 tournament_metadata['end_post'] = msg.jump_url
 
                 self.ACTIVE_TOURNAMENT_FILE.unlink()
-            elif seconds_since_end > 4500:
-                print(f"Error: `{tournament_metadata['name']}` has ended but results were not announced right afterward")
 
             with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as tm_f:
                 json.dump(tournament_metadata, tm_f, ensure_ascii=False, indent=4)
