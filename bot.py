@@ -25,22 +25,6 @@ CORANAC_SITE = "https://www.coranac.com/spacechem/mission-viewer"
 # TODO: Organize things to be able to use the same commands or code to run standalone puzzle challenges unrelated to
 #       any tournament, e.g. puzzle-of-the-week/month, behaving like a standalone tournament round
 
-# Tournaments structure:
-# tournaments/
-#     active_tournament.txt -> "slugified_tournament_name_1"
-#     slugified_tournament_name_1/
-#         tournament_metadata.json -> name, host, etc, + round dirs / metadata
-#         participants.json        -> discord_tag: name (as it will appear in solution exports)
-#         standings.json           -> name: score  # Edited by bot after each round
-#         bonus1_puzzleA/
-#         round1_puzzleB/
-#             puzzleB.puzzle
-#             solutions.txt
-#         round2_puzzleC/
-#         ...
-#     slugified_tournament_name_2/
-#     ...
-
 # TODO: ProcessPoolExecutor might be more appropriate but not sure if the overhead for many small submissions is going
 #       to add up more than with threads and/or if limitations on number of processes is the bigger factor
 thread_pool_executor = ThreadPoolExecutor()  # TODO max_workers=5 or some such ?
@@ -142,8 +126,38 @@ class PuzzleSubmissionsLock:
             self.no_submissions_in_progress.set()
 
 
+# Create a decorator for checking if a user has tournament-hosting permissions
+# Unfortunately can't be a method of the Tournament cog since command.check doesn't pass self
+def is_tournament_host(ctx):
+    hosts_json_file = Tournament.TOURNAMENTS_DIR / 'hosts.json'
+    if not hosts_json_file.exists():
+        return False
+
+    with open(hosts_json_file, encoding='utf-8') as f:
+        return str(ctx.message.author) in json.load(f)['hosts']
+
+
 class Tournament(commands.Cog):  # name="Help text name?"
     """Tournament Commands"""
+
+    # Tournaments structure:
+    # tournaments/
+    #     hosts.json -> list of discord users with admin access to tournament commands
+    #     active_tournament.txt -> "slugified_tournament_name_1"
+    #     slugified_tournament_name_1/
+    #         tournament_metadata.json -> name, host, etc, + round dirs / metadata
+    #         participants.json        -> discord_tag: name (as it will appear in solution exports)
+    #         standings.json           -> name: score  # Edited by bot after each round
+    #         bonus1_puzzleA/
+    #         round1_puzzleB/
+    #             puzzleB.puzzle
+    #             solutions.txt
+    #         round2_puzzleC/
+    #         ...
+    #     slugified_tournament_name_2/
+    #     ...
+
+    is_host = commands.check(is_tournament_host)  # Made a class var to reduce shadowing issues
 
     TOURNAMENTS_DIR = Path(__file__).parent / 'tournaments'  # Left relative so that filesystem paths can't leak into bot msgs
     ACTIVE_TOURNAMENT_FILE = TOURNAMENTS_DIR / 'active_tournament.txt'
@@ -164,7 +178,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         self.round_results_tasks = {}
         self.tournament_results_task = None
 
-        # Start relevant announcment tasks. These will schedule themselves based on current tournament metadata
+        # Start relevant announcement tasks. These will schedule themselves based on current tournament metadata
         if self.ACTIVE_TOURNAMENT_FILE.exists():
             _, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
 
@@ -239,10 +253,55 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
     # Note: Command docstrings should be limited to ~80 characters to avoid ugly wraps in any reasonably-sized window
 
+    def hosts(self):
+        hosts_json_file = self.TOURNAMENTS_DIR / 'hosts.json'
+        if not hosts_json_file.exists():
+            return []
+
+        with open(hosts_json_file, encoding='utf-8') as f:
+            return json.load(f)['hosts']
+
+    @commands.command(name='tournament-hosts')
+    @is_host
+    async def hosts_cmd(self, ctx):
+        await ctx.send(f"The following users have tournament-hosting permissions: {', '.join(self.hosts())}")
+
+    @commands.command(name='add-tournament-host')
+    @commands.is_owner()
+    async def add_tournament_host(self, ctx, user: discord.User):
+        """Give the specified user tournament-hosting permissions."""
+        discord_tag = str(user)  # e.g. <username>#1234. Guaranteed to be unique
+
+        self.TOURNAMENTS_DIR.mkdir(exist_ok=True)
+
+        hosts = self.hosts()
+        if discord_tag in hosts:
+            raise ValueError("Given user is already a tournament host")
+        hosts.append(discord_tag)
+
+        with open(self.TOURNAMENTS_DIR / 'hosts.json', 'w', encoding='utf-8') as f:
+            json.dump({'hosts': hosts}, f)
+
+        await ctx.send(f"{discord_tag} added to tournament hosts.")
+
+    @commands.command(name='remove-tournament-host')
+    @commands.is_owner()
+    async def remove_tournament_host(self, ctx, user: discord.User):
+        """Remove tournament-hosting permissions from the specified user."""
+        discord_tag = str(user)  # e.g. <username>#1234. Guaranteed to be unique
+
+        hosts = self.hosts()
+        if discord_tag not in hosts:
+            raise ValueError("Given user is already a tournament host")
+        hosts.append(discord_tag)
+
+        with open(self.TOURNAMENTS_DIR / 'hosts.json', 'w', encoding='utf-8') as f:
+            json.dump({'hosts': hosts}, f)
+
+        await ctx.send(f"{discord_tag} removed from tournament hosts.")
+
     @commands.command(name='tournament-create')
-    # TODO: Commented out all the DM-only command lock decorators for debugging since doing so
-    #       dynamically on --debug seems difficult - uncomment them!
-    @commands.is_owner()  # TODO: @commands.has_role('tournament-host')
+    @is_host
     async def tournament_create(self, ctx, name, start, end):
         """Create a tournament. There may only be one pending/active at a time.
 
@@ -289,8 +348,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         await ctx.send(f"Successfully created {repr(name)}")
 
     @commands.command(name='tournament-update')
-    @commands.is_owner()  # TODO: @commands.has_role('tournament-host')
-    #@commands.dm_only()
+    @is_host
     async def tournament_update(self, ctx, new_name, new_start, new_end):
         """Update the current/pending tournament.
 
@@ -391,8 +449,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
     # TODO: Puzzle flavour text
     @commands.command(name='tournament-add-puzzle')
-    @commands.is_owner()  # TODO: @commands.has_role('tournament-host')
-    #@commands.dm_only()
+    @is_host
     async def tournament_add_puzzle(self, ctx, round_name, metric, total_points: float, start, end=None):
         """Add the attached puzzle file as a new round of the tournament.
 
@@ -495,8 +552,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         await ctx.send(f"Successfully added {round_name} {level.name} to {tournament_metadata['name']}")
 
     @commands.command(name='tournament-delete-puzzle')
-    @commands.is_owner()  # TODO: @commands.has_role('tournament-host')
-    #@commands.dm_only()
+    @is_host
     async def delete_puzzle(self, ctx, *, round_or_puzzle_name):
         """Delete the specified round/puzzle."""
         async with self.tournament_metadata_write_lock:
@@ -701,7 +757,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
     #@commands.dm_only()  # Prevent public channel spam and make sure TO can't accidentally leak current round results
     async def tournament_info(self, ctx, *, round_or_puzzle_name=None):
         """List info on the active tournament or if provided, the specified round/puzzle name."""
-        is_host = await self.bot.is_owner(ctx.author)  # TODO: has_role('tournament-host')
+        is_host = is_tournament_host(ctx)
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=is_host)
 
         if round_or_puzzle_name is None:
@@ -720,7 +776,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
                                          + f" [Announcement]({round_metadata['start_post']})"
                     if 'end_post' in round_metadata:
                         embed.description += f" | [Results]({round_metadata['end_post']})"
-                elif is_host:  # TODO: has_role('tournament-host')
+                elif is_host:
                     # Allow the TO to see schedule info on upcoming puzzles
                     embed.description += f"\n{round_metadata['round_name']}, {puzzle_name}:" \
                                          + f" Start: {self.format_tournament_datetime(round_metadata['start'])}" \
@@ -758,14 +814,15 @@ class Tournament(commands.Cog):  # name="Help text name?"
         # Prevent non-TO users from accessing rounds that haven't ended or that the bot hasn't announced the results of yet
         if 'end_post' in round_metadata:
             embed.description += f" | [Results]({round_metadata['end_post']})"
-        elif is_host:
-            # If this is the TO, calculate and append the current round standings so they can keep an eye on its progress
-            results_str, _ = self.get_round_results(tournament_dir, tournament_metadata, puzzle_name)
-
-            await ctx.send(f"**Current Results**:\n```\n{results_str}\n```", embed=embed)
-            return
 
         await ctx.send(embed=embed)
+
+        # If this is the TO, preview the results post for them (in a separate msg so the embed goes on top)
+        if is_host and not 'end_post' in round_metadata:
+            reply = f"On {self.format_tournament_datetime(round_metadata['end'])} the following announcement will be sent:"
+            announcement, attachments, _ = self.round_results_announcement_and_standings_change(tournament_dir, tournament_metadata, puzzle_name)
+
+            await ctx.send(announcement, files=attachment)
 
     def round_announcement(self, tournament_dir, tournament_metadata, puzzle_name):
         """Helper to announce_round_start for creating the announcement msg, also used for the TO to preview.
@@ -790,6 +847,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
                         value=f"[Coranac Site]({CORANAC_SITE}?code={single_line_level_code})",
                         inline=True)
         embed.add_field(name='Metric', value=round_metadata['metric'], inline=True)
+        embed.add_field(name='Points', value=round_metadata['total_points'], inline=True)
 
         # Make the ISO datetime string friendlier-looking (e.g. no +00:00) or indicate puzzle is tournament-long
         round_end = self.format_tournament_datetime(round_metadata['end'])
@@ -924,7 +982,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
                 print(f"Announcing {puzzle_name} results")
                 await self.puzzle_submission_locks[puzzle_name].lock_and_wait_for_submitters()
-                results_str, standings_delta = self.get_round_results(tournament_dir, tournament_metadata, puzzle_name)
+                announcement, attachments, standings_delta = \
+                    self.round_results_announcement_and_standings_change(tournament_dir, tournament_metadata, puzzle_name)
 
                 # Increment the tournament's standings
                 with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:
@@ -938,16 +997,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 with open(tournament_dir / 'standings.json', 'w', encoding='utf-8') as f:
                     json.dump(standings, f)
 
-                # Embed doesn't seem to be wide enough for tables, use code block
-                announcement = f"{round_metadata['round_name']} ({puzzle_name}) Results"
-                announcement += f"\n```\n{results_str}\n```"
-
-                # TODO: Add current overall tournament standings?
-
-                # TODO: Also attach blurbs.txt
-
-                solns_file = tournament_dir / round_metadata['dir'] / 'solutions.txt'
-                msg = await channel.send(announcement, file=discord.File(str(solns_file), filename=solns_file.name))
+                msg = await channel.send(announcement, files=attachments)
                 round_metadata['end_post'] = msg.jump_url
 
                 del self.puzzle_submission_locks[puzzle_name]
@@ -1033,14 +1083,14 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
         return '\n'.join('  '.join(s.ljust(min_widths[i]) for i, s in enumerate(row)) for row in formatted_rows)
 
-    def get_round_results(self, tournament_dir, tournament_metadata, puzzle_name):
-        """Given a solutions.txt, level, and metric, return both a formatted string of the players' ranked results, and
-        a dict mapping each player's name to their gained tournament points.
-        String format: Rank,Player,Score,<other metric terms>,Metric Score
-        If puzzle points is included add: ,Rel. Metric,Points
+    def round_results_announcement_and_standings_change(self, tournament_dir, tournament_metadata, puzzle_name):
+        """Given tournament dir/metadata and a specified puzzle, return a string of the announcement message text for
+        the puzzle results, a list of attachments, and a dict indicating the changes to the standings.
         """
         round_metadata = tournament_metadata['rounds'][puzzle_name]
         round_dir = tournament_dir / round_metadata['dir']
+
+        attachments = []
 
         with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as sf:
             solns_str = sf.read()
@@ -1055,13 +1105,10 @@ class Tournament(commands.Cog):  # name="Help text name?"
         solns_file = round_dir / 'solutions.txt'
         with open(solns_file, 'r', encoding='utf-8') as sf:
             solns_str = sf.read()
+        attachments.append(discord.File(str(solns_file), filename=solns_file.name))
 
         level = schem.Level(level_code)
         solutions = [schem.Solution(level, soln_str) for soln_str in schem.Solution.split_solutions(solns_str)]
-
-        # TODO: Shouldn't need a solution to parse the header row; extract these from the metric
-        if not solutions:
-            return '#  Name  Cycles  Reactors  Symbols  Metric  Rel. Metric  Points', {}
 
         # Calculate each score and the top score
         metric_scores_and_terms = [get_metric_and_terms(solution, round_metadata['metric']) for solution in solutions]
@@ -1083,7 +1130,19 @@ class Tournament(commands.Cog):  # name="Help text name?"
             standings_scores[solution.author] = points
             results.append([solution.author] + list(term_values.values()) + [metric_score, relative_metric, points])
 
-        return self.ranking_str(col_headers, results, sort_idx=-3), standings_scores
+        # TODO: Shouldn't need a solution to parse the header row; extract these from the metric
+        if not solutions:
+            col_headers = ('#', 'Name', 'Cycles', 'Reactors', 'Symbols', 'Metric', 'Rel. Metric', 'Points')
+
+        # Embed doesn't seem to be wide enough for tables, use code block
+        announcement = f"{round_metadata['round_name']} ({puzzle_name}) Results"
+        announcement += f"\n```\n{self.ranking_str(col_headers, results, sort_idx=-3)}\n```"
+
+        # TODO: Add current overall tournament standings?
+
+        # TODO: Also attach blurbs.txt
+
+        return announcement, attachments, standings_scores
 
     def standings_str(self, tournament_dir):
         """Given a tournament's directory, return a string of the tournament standings"""
