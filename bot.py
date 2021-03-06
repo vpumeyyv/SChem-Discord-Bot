@@ -822,10 +822,12 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
         # If this is the TO, preview the results post for them (in a separate msg so the embed goes on top)
         if is_host and not 'end_post' in round_metadata:
-            reply = f"On {self.format_tournament_datetime(round_metadata['end'])} the following announcement will be sent:"
             announcement, attachments, _ = self.round_results_announcement_and_standings_change(tournament_dir, tournament_metadata, puzzle_name)
 
-            await ctx.send(announcement, files=attachment)
+            reply = f"On {self.format_tournament_datetime(round_metadata['end'])} the following announcement will be sent:"
+            reply += '\n' + announcement
+
+            await ctx.send(reply, files=attachments)
 
     def round_announcement(self, tournament_dir, tournament_metadata, puzzle_name):
         """Helper to announce_round_start for creating the announcement msg, also used for the TO to preview.
@@ -1135,10 +1137,10 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
         # TODO: Shouldn't need a solution to parse the header row; extract these from the metric
         if not solutions:
-            col_headers = ('#', 'Name', 'Cycles', 'Reactors', 'Symbols', 'Metric', 'Rel. Metric', 'Points')
+            col_headers = ('Name', 'Cycles', 'Reactors', 'Symbols', 'Metric', 'Rel. Metric', 'Points')
 
         # Embed doesn't seem to be wide enough for tables, use code block
-        announcement = f"{round_metadata['round_name']} ({puzzle_name}) Results"
+        announcement = f"**{round_metadata['round_name']} ({puzzle_name}) Results**"
         announcement += f"\n```\n{self.ranking_str(col_headers, results, sort_idx=-3)}\n```"
 
         # TODO: Add current overall tournament standings?
