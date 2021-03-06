@@ -41,7 +41,7 @@ async def on_ready():
 @bot.event
 async def on_command_error(ctx, error):
     """Default bot command error handler."""
-    if isinstance(error, commands.CommandNotFound):
+    if isinstance(error, commands.CommandNotFound) or isinstance(error, commands.CheckFailure):
         return  # Avoid logging errors when users put in invalid commands
 
     await ctx.send(str(error))  # Probably bad practice but it makes the commands' code nice...
@@ -1115,7 +1115,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
         # Calculate each score and the top score
         metric_scores_and_terms = [get_metric_and_terms(solution, round_metadata['metric']) for solution in solutions]
-        min_metric_score = min(x[0] for x in metric_scores_and_terms)
+        min_metric_score = min(x[0] for x in metric_scores_and_terms) if metric_scores_and_terms else None
 
         # Sort by metric and add to the results string and player scores
         standings_scores = {}  # player_name: metric_score
