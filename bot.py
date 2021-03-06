@@ -264,12 +264,13 @@ class Tournament(commands.Cog):  # name="Help text name?"
     @commands.command(name='tournament-hosts')
     @is_host
     async def hosts_cmd(self, ctx):
+        """List all tournament hosts."""
         await ctx.send(f"The following users have tournament-hosting permissions: {', '.join(self.hosts())}")
 
     @commands.command(name='add-tournament-host')
     @commands.is_owner()
     async def add_tournament_host(self, ctx, user: discord.User):
-        """Give the specified user tournament-hosting permissions."""
+        """Give someone tournament-hosting permissions."""
         discord_tag = str(user)  # e.g. <username>#1234. Guaranteed to be unique
 
         self.TOURNAMENTS_DIR.mkdir(exist_ok=True)
@@ -287,7 +288,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
     @commands.command(name='remove-tournament-host')
     @commands.is_owner()
     async def remove_tournament_host(self, ctx, user: discord.User):
-        """Remove tournament-hosting permissions from the specified user."""
+        """Remove someone's tournament-hosting permissions."""
         discord_tag = str(user)  # e.g. <username>#1234. Guaranteed to be unique
 
         hosts = self.hosts()
@@ -303,7 +304,9 @@ class Tournament(commands.Cog):  # name="Help text name?"
     @commands.command(name='tournament-create')
     @is_host
     async def tournament_create(self, ctx, name, start, end):
-        """Create a tournament. There may only be one pending/active at a time.
+        """Create a tournament.
+
+        There may only be one tournament pending/active at a time.
 
         name: The tournament's official name, e.g. "2021 SpaceChem Tournament"
         start: The datetime on which the bot will announce the tournament publicly and
@@ -451,7 +454,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
     @commands.command(name='tournament-add-puzzle')
     @is_host
     async def tournament_add_puzzle(self, ctx, round_name, metric, total_points: float, start, end=None):
-        """Add the attached puzzle file as a new round of the tournament.
+        """Add a puzzle to the tournament.
 
         round_name: e.g. "Round 1" or "Bonus 1".
         metric: The equation a player should minimize.
@@ -554,7 +557,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
     @commands.command(name='tournament-delete-puzzle')
     @is_host
     async def delete_puzzle(self, ctx, *, round_or_puzzle_name):
-        """Delete the specified round/puzzle."""
+        """Delete a round/puzzle."""
         async with self.tournament_metadata_write_lock:
             tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
 
@@ -622,7 +625,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
     #@commands.dm_only()  # TODO: Give the bot permission to delete !tournament-submit messages from public channels
                           #       since someone will inevitably forget to use DMs
     async def tournament_submit(self, ctx):
-        """Submit the attached solution file to the matching tournament puzzle."""
+        """Submit the attached solution file to the tournament."""
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata()
 
         assert len(ctx.message.attachments) == 1, "Expected one attached solution file!"
@@ -756,7 +759,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
     @commands.command(name='tournament-info')
     #@commands.dm_only()  # Prevent public channel spam and make sure TO can't accidentally leak current round results
     async def tournament_info(self, ctx, *, round_or_puzzle_name=None):
-        """List info on the active tournament or if provided, the specified round/puzzle name."""
+        """Info on the tournament or specified round/puzzle."""
         is_host = is_tournament_host(ctx)
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=is_host)
 
