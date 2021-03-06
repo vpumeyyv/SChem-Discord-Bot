@@ -3,7 +3,7 @@
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
@@ -102,7 +102,6 @@ class PuzzleSubmissionsLock:
     The lock will remain permanently locked once lock_and_wait_for_submitters() has been called (current
     users: puzzle results announcer and puzzle deleter).
     """
-    # TODO: Keep metadata and/or other tournament files in memory to avoid excess file-reads (but still write to files)
     def __init__(self):
         self.num_submitters = 0
         self.is_closed = False  # Raise exception in __aenter__ if set?
@@ -154,19 +153,35 @@ class Tournament(commands.Cog):  # name="Help text name?"
     # calls await after having left the metadata in bad state. Given this, readers need not acquire the lock.
     tournament_metadata_write_lock = asyncio.Lock()
 
+    # TODO: Keep metadata and/or other tournament files in memory to avoid excess file-reads (but still write to files)
     def __init__(self, bot):
-       self.bot = bot
+        self.bot = bot
 
-       # Create submissions locks for all open rounds of the current tournament
-       if self.ACTIVE_TOURNAMENT_FILE.exists():
-           _, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
-           self.puzzle_submission_locks = {puzzle_name: PuzzleSubmissionsLock()
-                                           for puzzle_name, round_metadata in tournament_metadata['rounds'].items()
-                                           if 'start_post' in round_metadata and 'end_post' not in round_metadata}
+        # Bot announcement tasks, stored so we can update them if relevant metadata changes
+        self.tournament_start_task = None
+        self.round_start_tasks = {}
+        self.puzzle_submission_locks = {}
+        self.round_results_tasks = {}
+        self.tournament_results_task = None
 
-       # Start bot's looping tasks
-       self.announce_starts.start()
-       self.announce_results.start()
+        # Start relevant announcment tasks. These will schedule themselves based on current tournament metadata
+        if self.ACTIVE_TOURNAMENT_FILE.exists():
+            _, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
+
+            # Schedule the relevant tournament announcement if not yet done
+            if 'start_post' not in tournament_metadata:
+                self.tournament_start_task = self.bot.loop.create_task(self.announce_tournament_start(tournament_metadata))
+            elif 'end_post' not in tournament_metadata:
+                self.tournament_results_task = self.bot.loop.create_task(self.announce_tournament_results(tournament_metadata))
+
+            for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
+                if 'start_post' not in round_metadata:
+                    # If the puzzle has not been announced yet, schedule the announcement task
+                    self.round_start_tasks[puzzle_name] = self.bot.loop.create_task(self.announce_round_start(puzzle_name, round_metadata))
+                elif 'end_post' not in round_metadata:
+                    # If the puzzle has opened but not ended, add a submissions lock and results announcement task
+                    self.puzzle_submission_locks[puzzle_name] = PuzzleSubmissionsLock()
+                    self.round_results_tasks[puzzle_name] = self.bot.loop.create_task(self.announce_round_results(puzzle_name, round_metadata))
 
     def get_active_tournament_dir_and_metadata(self, is_host=False):
         """Helper to fetch the active tournament directory and metadata. Raise error if there is no active tournament
@@ -189,7 +204,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
     def parse_datetime_str(self, s):
         """Parse and check validity of given ISO date string then return as a UTC Datetime (converting as needed)."""
-        dt = datetime.fromisoformat(s)
+        dt = datetime.fromisoformat(s.rstrip('Z'))  # For some reason isoformat doesn't like Z (Zulu time) suffix
 
         # If timezone unspecified, assume UTC, else convert to UTC
         if dt.tzinfo is None:
@@ -232,10 +247,13 @@ class Tournament(commands.Cog):  # name="Help text name?"
         """Create a tournament. There may only be one pending/active at a time.
 
         name: The tournament's official name, e.g. "2021 SpaceChem Tournament"
-        start: The date that the bot will announce the tournament publicly and
-               after which puzzle rounds may start.
-        end: The date that the bot will announce the tournament results, after
-             closing and tallying the results of any still-open puzzles.
+        start: The datetime on which the bot will announce the tournament publicly and
+               after which puzzle rounds may start. ISO format, default UTC.
+               E.g. the following are all equivalent: 2000-01-31, "2000-01-31 00:00",
+                    2000-01-30T19:00:00-05:00
+        end: The datetime on which the bot will announce the tournament results,
+             after closing and tallying the results of any still-open puzzles.
+             Same format as `start`.
         """
         tournament_dir_name = slugify(name)  # Convert to a valid directory name
         assert tournament_dir_name, f"Invalid tournament name {name}"
@@ -265,12 +283,26 @@ class Tournament(commands.Cog):  # name="Help text name?"
             with open(tournament_dir / 'standings.json', 'w', encoding='utf-8') as f:
                 json.dump({}, f, ensure_ascii=False, indent=4)
 
+            # Schedule the tournament announcement
+            self.tournament_start_task = self.bot.loop.create_task(self.announce_tournament_start(tournament_metadata))
+
         await ctx.send(f"Successfully created {repr(name)}")
 
     @commands.command(name='tournament-update')
     @commands.is_owner()  # TODO: @commands.has_role('tournament-host')
     #@commands.dm_only()
     async def tournament_update(self, ctx, new_name, new_start, new_end):
+        """Update the current/pending tournament.
+
+        new_name: The tournament's official name, e.g. "2021 SpaceChem Tournament"
+        new_start: The datetime on which the bot will announce the tournament and
+                   after which puzzle rounds may start. ISO format, default UTC.
+                   E.g. the following are all equivalent: 2000-01-31, "2000-01-31 00:00",
+                        2000-01-30T19:00:00-05:00
+        new_end: The datetime on which the bot will announce the tournament results,
+                 after closing and tallying the results of any still-open puzzles.
+                 Same format as `new_start`.
+        """
         updated_fields = []
 
         async with self.tournament_metadata_write_lock:
@@ -280,6 +312,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
             new_start, new_end = self.process_tournament_dates(new_start, new_end, check_start_in_future=False)
 
             if new_start != tournament_metadata['start']:
+                assert 'start_post' not in tournament_metadata, "Cannot update start date on already-announced tournament"
+
                 # If we're modifying the start date, we do have to make sure it's in the future
                 if new_start < datetime.now(timezone.utc).isoformat():
                     raise ValueError(f"New start date is in past")
@@ -331,6 +365,14 @@ class Tournament(commands.Cog):  # name="Help text name?"
             with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
                 json.dump(tournament_metadata, f)
 
+            # If the update was successful and changed a date(s), cancel and replace the relevant BG announcement task
+            if 'start date' in updated_fields:
+                self.tournament_start_task.cancel()
+                self.tournament_start_task = self.bot.loop.create_task(self.announce_tournament_start(tournament_metadata))
+            elif 'end date' in updated_fields and 'start_post' in tournament_metadata:
+                self.tournament_results_task.cancel()
+                self.tournament_results_task = self.bot.loop.create_task(self.announce_tournament_results(tournament_metadata))
+
         reply = f"Successfully updated tournament {', '.join(updated_fields)}."
         if modified_round_ends:
             reply += f"\nEnd date of round(s) `{'`, `'.join(modified_round_ends)}` updated to match new end date."
@@ -351,7 +393,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
     @commands.command(name='tournament-add-puzzle')
     @commands.is_owner()  # TODO: @commands.has_role('tournament-host')
     #@commands.dm_only()
-    async def tournament_add_puzzle(self, ctx, round_name, metric, total_points: int, start, end=None):
+    async def tournament_add_puzzle(self, ctx, round_name, metric, total_points: float, start, end=None):
         """Add the attached puzzle file as a new round of the tournament.
 
         round_name: e.g. "Round 1" or "Bonus 1".
@@ -368,10 +410,12 @@ class Tournament(commands.Cog):  # name="Help text name?"
         total_points: # of points that the first place player will receive.
                       Other players will get points proportional to this based
                       on their relative metric score.
-        start: The datetime that round submissions open, in ISO format.
-               If timezone unspecified, assumed to be UTC.
-               E.g.: 2000-01-31, "2000-01-31 17:00:00", 2000-01-31T17:00:00-05:00.
-        end: The datetime that round submissions close. Same format as `start`.
+        start: The datetime on which the puzzle will be announced and submissions opened.
+               ISO format, default UTC.
+               E.g. the following are all equivalent: 2000-01-31, "2000-01-31 00:00",
+                    2000-01-30T19:00:00-05:00
+        end: The datetime on which submissions will close and the results will be
+             announced. Same format as `start`.
              If excluded, puzzle is open until the tournament is ended (e.g. the
              2019 tournament's 'Additional' puzzles).
         """
@@ -436,6 +480,10 @@ class Tournament(commands.Cog):  # name="Help text name?"
             with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
                 json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
 
+            # Schedule the round announcement
+            self.round_start_tasks[level.name] = self.bot.loop.create_task(self.announce_round_start(level.name,
+                                                                                                     tournament_metadata['rounds'][level.name]))
+
             # TODO: Track the history of each player's scores over time and do cool graphs of everyone's metrics going
             #       down as the deadline approaches!
             #       Can do like the average curve of everyone's scores over time and see how that curve varies by level
@@ -457,7 +505,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
             # Convert to puzzle name
             puzzle_name = self.get_puzzle_name(tournament_metadata, round_or_puzzle_name)
             if puzzle_name is None:
-                raise FileNotFoundError(f"No known puzzle/round ~~= `{round_or_puzzle_name}`")
+                raise FileNotFoundError(f"No known puzzle/round ~= `{round_or_puzzle_name}`")
 
             round_metadata = tournament_metadata['rounds'][puzzle_name]
             round_dir = tournament_dir / round_metadata['dir']
@@ -469,9 +517,9 @@ class Tournament(commands.Cog):  # name="Help text name?"
             if datetime.now(timezone.utc).isoformat() > round_metadata['start']:
                 timeout_seconds = 30
                 warn_msg = await ctx.send(
-                    f"This round's start date ({round_metadata['start']}) has already passed and"
-                    + " deleting it may remove player solutions. Are you sure you wish to delete it?"
-                    + f"\nReact to this message with ✅ within {timeout_seconds} seconds to proceed.")
+                    f"Warning: This round's start date ({round_metadata['start']}) has already passed and"
+                    + " deleting it will delete any player solutions. Are you sure you wish to continue?"
+                    + f"\nReact to this message with ✅ within {timeout_seconds} seconds to delete anyway.")
 
                 def check(reaction, user):
                     return reaction.message.id == warn_msg.id and str(reaction.emoji) == '✅'
@@ -493,6 +541,14 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
             with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
                 json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
+
+            # Cancel and remove the relevant BG announcement task if the puzzle was not closed
+            if 'start_post' not in round_metadata:
+                self.round_start_tasks[puzzle_name].cancel()
+                del self.round_start_tasks[puzzle_name]
+            elif 'end_post' not in round_metadata:
+                self.round_results_tasks[puzzle_name].cancel()
+                del self.round_results_tasks[puzzle_name]
 
         await (ctx.send if msg is None else msg.edit)(f"Successfully deleted {round_name}, `{puzzle_name}`")
 
@@ -712,7 +768,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         await ctx.send(embed=embed)
 
     def round_announcement(self, tournament_dir, tournament_metadata, puzzle_name):
-        """Helper to announce_starts for creating the announcement msg, also used for the TO to preview.
+        """Helper to announce_round_start for creating the announcement msg, also used for the TO to preview.
         Return the announcement's embed and puzzle file.
         """
         round_metadata = tournament_metadata['rounds'][puzzle_name]
@@ -745,65 +801,211 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
         return embed, discord.File(str(puzzle_file), filename=puzzle_file.name)
 
-    @tasks.loop(minutes=5)
-    async def announce_starts(self):
-        """Announce any rounds that just started or the tournament itself."""
-        if not self.ACTIVE_TOURNAMENT_FILE.exists():
-            return
+    async def wait_until(self, dt):
+        """Helper to async sleep until the given Datetime."""
+        # Sleep and check time twice for safety since I've found mixed answers on the accuracy of sleeping for week+
+        for i in range(3):
+            cur_dt = datetime.now(timezone.utc)
+            remaining_seconds = (dt - cur_dt).total_seconds()
 
-        await self.bot.wait_until_ready()  # Looks awkward but apparently get_channel can return None if bot isn't ready
-        channel = self.bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
+            if remaining_seconds < 0:
+                return
+            elif i == 1:
+                print(f"BG task attempting to sleep until {dt.isoformat()} only slept until {cur_dt.isoformat()}; re-sleeping")
+            elif i == 2:
+                raise Exception(f"wait_until waited until {cur_dt.isoformat()} instead of {dt.isoformat()}")
 
-        async with self.tournament_metadata_write_lock:
-            tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
+            await asyncio.sleep(remaining_seconds)
 
-            cur_time = datetime.now(timezone.utc)
+    async def announce_tournament_start(self, tournament_metadata):
+        """Wait until the tournament start date and then announce it."""
+        # TODO: Try/except/print in these background announcement tasks is ugly af, find a better way
+        try:
+            assert 'start_post' not in tournament_metadata, "Tournament has already been announced!"
 
-            # Announce the tournament if it just started and hasn't already been announced
-            if 'start_post' not in tournament_metadata:
-                start_dt = datetime.fromisoformat(tournament_metadata['start'])
-                seconds_since_start = (cur_time - start_dt).total_seconds()
-                if 0 <= seconds_since_start <= 3600:
-                    print("Announcing tournament")
-                    announcement = f"Announcing the {tournament_metadata['name']}"
-                    announcement += f"\nEnd date: {self.format_tournament_datetime(tournament_metadata['end'])}"
+            # Wait until the tournament start time
+            start = tournament_metadata['start']
+            await self.wait_until(datetime.fromisoformat(start))
 
-                    msg = await channel.send(announcement)
-                    tournament_metadata['start_post'] = msg.jump_url
-                elif seconds_since_start > 3600:
-                    print(f"Error: `{tournament_metadata['name']}` has started but it was not announced within an hour")
+            await self.bot.wait_until_ready()  # Looks awkward but apparently get_channel can return None if bot isn't ready
+            channel = self.bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
 
-            # Announce any round that started in the last hour and hasn't already been anounced
-            for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
-                # Ignore round if it was already announced or didn't open for submissions in the last hour.
-                # The hour limit is to ensure the bot doesn't spam too many announcements if something goes nutty,
-                # while leaving some flex time in case the bot was down for some reason right after the puzzle started.
-                start_dt = datetime.fromisoformat(round_metadata['start'])
-                seconds_since_start = (cur_time - start_dt).total_seconds()
-                if 'start_post' in round_metadata or not 0 <= seconds_since_start <= 3600:
-                    # If we missed the hour limit but the puzzle was never announced, log a warning
-                    if 'start_post' not in round_metadata and seconds_since_start > 3600:
-                        # This will spam the log but only 96 times a day...
-                        print(f"Error: Puzzle {puzzle_name} was not announced within an hour")
-                    continue
+            async with self.tournament_metadata_write_lock:
+                # Reread the tournament metadata since it may have changed
+                tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
+                assert tournament_metadata['start'] == start, \
+                    "Tournament start changed but original announcement task was not cancelled"
+                assert 'start_post' not in tournament_metadata, \
+                    "Tournament was announced while announcement task was still scheduled"
+
+                print("Announcing tournament")
+                announcement = f"Announcing the {tournament_metadata['name']}"
+                announcement += f"\nEnd date: {self.format_tournament_datetime(tournament_metadata['end'])}"
+
+                msg = await channel.send(announcement)
+                tournament_metadata['start_post'] = msg.jump_url
+
+                with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
+                    json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
+
+            # Schedule the tournament results task
+            self.tournament_results_task = self.bot.loop.create_task(self.announce_tournament_results(tournament_metadata))
+
+            # Remove this task
+            self.tournament_start_task = None
+        except asyncio.CancelledError:  # TODO: Not needed in py3.8+ when CancelledError subclasses BaseException
+            raise
+        except Exception as e:
+            print(e)
+
+    async def announce_round_start(self, puzzle_name, round_metadata):
+        """Wait until the round start date and then announce it."""
+        try:
+            assert 'start_post' not in round_metadata, "Round has already been announced!"
+
+            # Wait until the round start time
+            start = round_metadata['start']
+            await self.wait_until(datetime.fromisoformat(start))
+
+            await self.bot.wait_until_ready()  # Looks awkward but apparently get_channel can return None if bot isn't ready
+            channel = self.bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
+
+            async with self.tournament_metadata_write_lock:
+                # Reread the tournament metadata since it may have changed
+                tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
+                round_metadata = tournament_metadata['rounds'][puzzle_name]
+                assert round_metadata['start'] == start, \
+                    "Round start changed but original announcement task was not cancelled"
+                assert 'start_post' not in round_metadata, \
+                    "Round was announced while announcement task was still scheduled"
 
                 print(f"Announcing {puzzle_name} start")
-
-                try:
-                    embed, attachment = self.round_announcement(tournament_dir, tournament_metadata, puzzle_name)
-                except Exception as e:
-                    print(e)
-                    continue
-
+                embed, attachment = self.round_announcement(tournament_dir, tournament_metadata, puzzle_name)
                 msg = await channel.send(embed=embed, file=attachment)
 
                 # Keep the link to the original announcement post for !tournament-info. We can also check this to know
                 # whether we've already done an announcement post
                 round_metadata['start_post'] = msg.jump_url
-                self.puzzle_submission_locks[puzzle_name] = PuzzleSubmissionsLock()
 
-            with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as tm_f:
-                json.dump(tournament_metadata, tm_f, ensure_ascii=False, indent=4)
+                with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
+                    json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
+
+            # Create a submission lock for the puzzle and schedule the round results task
+            self.puzzle_submission_locks[puzzle_name] = PuzzleSubmissionsLock()
+            self.round_results_tasks[puzzle_name] = self.bot.loop.create_task(self.announce_round_results(puzzle_name, round_metadata))
+
+            # Remove this task
+            del self.round_start_tasks[puzzle_name]
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(e)
+
+    async def announce_round_results(self, puzzle_name, round_metadata):
+        """Wait until the round end date and then announce its results."""
+        try:
+            assert 'end_post' not in round_metadata, "Round results have already been announced!"
+
+            # Wait until the round start time + 5 seconds to ensure last-second submitters have grabbed the submission lock
+            end = round_metadata['end']
+            await self.wait_until(datetime.fromisoformat(end) + timedelta(seconds=5))
+
+            await self.bot.wait_until_ready()  # Looks awkward but apparently get_channel can return None if bot isn't ready
+            channel = self.bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
+
+            async with self.tournament_metadata_write_lock:
+                # Reread the tournament metadata since it may have changed
+                tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
+                round_metadata = tournament_metadata['rounds'][puzzle_name]
+                assert round_metadata['end'] == end, \
+                    "Round end changed but original results announcement task was not cancelled"
+                assert 'end_post' not in round_metadata, \
+                    "Round results were announced while results announcement task was still scheduled"
+
+                print(f"Announcing {puzzle_name} results")
+                await self.puzzle_submission_locks[puzzle_name].lock_and_wait_for_submitters()
+                results_str, standings_delta = self.get_round_results(tournament_dir, tournament_metadata, puzzle_name)
+
+                # Increment the tournament's standings
+                with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:
+                    standings = json.load(f)
+
+                for name, points in standings_delta.items():
+                    if name not in standings:
+                        standings[name] = 0
+                    standings[name] += points
+
+                with open(tournament_dir / 'standings.json', 'w', encoding='utf-8') as f:
+                    json.dump(standings, f)
+
+                # Embed doesn't seem to be wide enough for tables, use code block
+                announcement = f"{round_metadata['round_name']} ({puzzle_name}) Results"
+                announcement += f"\n```\n{results_str}\n```"
+
+                # TODO: Add current overall tournament standings?
+
+                # TODO: Also attach blurbs.txt
+
+                solns_file = tournament_dir / round_metadata['dir'] / 'solutions.txt'
+                msg = await channel.send(announcement, file=discord.File(str(solns_file), filename=solns_file.name))
+                round_metadata['end_post'] = msg.jump_url
+
+                del self.puzzle_submission_locks[puzzle_name]
+
+                with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
+                    json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
+
+            # Remove this task
+            del self.round_results_tasks[puzzle_name]
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(e)
+
+    async def announce_tournament_results(self, tournament_metadata):
+        """Wait until the tournament end date and then announce its results."""
+        try:
+            assert 'end_post' not in tournament_metadata, "Tournament results have already been announced!"
+
+            # Wait until the tournament end time
+            end = tournament_metadata['end']
+            await self.wait_until(datetime.fromisoformat(end))
+
+            # Wait for any remaining puzzle rounds to be tallied by round results tasks (they take variable time
+            # depending on any still-running submissions)
+            # We'll know this is done when all round results tasks have been deleted
+            while self.round_results_tasks:
+                await asyncio.sleep(10)
+
+            await self.bot.wait_until_ready()  # Looks awkward but apparently get_channel can return None if bot isn't ready
+            channel = self.bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
+
+            async with self.tournament_metadata_write_lock:
+                # Reread the tournament metadata since it may have changed
+                tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
+                assert tournament_metadata['end'] == end, \
+                    "Tournament end changed but original results announcement task was not cancelled"
+                assert 'end_post' not in tournament_metadata, \
+                    "Tournament results were announced while results announcement task was still scheduled"
+
+                print("Announcing tournament results")
+                announcement = f"{tournament_metadata['name']} Results"
+                announcement += f"\n```\n{self.standings_str(tournament_dir)}\n```"
+
+                msg = await channel.send(announcement)
+                tournament_metadata['end_post'] = msg.jump_url
+
+                self.ACTIVE_TOURNAMENT_FILE.unlink()
+
+                with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
+                    json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
+
+            # Remove this task
+            self.tournament_results_task = None
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(e)
 
     def ranking_str(self, headers, rows, sort_idx=-1, desc=False, max_col_width=12):
         """Given an iterable of column headers and list of rows containing strings or numeric types, return a
@@ -890,79 +1092,6 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
         return self.ranking_str(('Name', 'Score'), standings.items(), desc=True)
 
-    @tasks.loop(minutes=5)
-    async def announce_results(self):
-        """Announce the results of any rounds that ended 15+ minutes ago, or of the tournament."""
-        if not self.ACTIVE_TOURNAMENT_FILE.exists():
-            return
-
-        await self.bot.wait_until_ready()  # Looks awkward but apparently get_channel can return None if bot isn't ready
-        channel = self.bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
-
-        # A small delay of a few seconds before locking and waiting for remaining puzzle submissions, to forgive
-        # discrepencies in clock times and the order that async tasks are called
-        deadline_leeway_seconds = 5
-
-        async with self.tournament_metadata_write_lock:
-            tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
-
-            # Announce the end of any round that ended and hasn't already has its end ennounced
-            # The 5 second delay is to give time for any pre-deadline submit calls to finish grabbing the puzzle's
-            # submissions lock. This is okay since submit checks the datetime itself anyway before grabbing the lock.
-            cur_time = datetime.now(timezone.utc)
-            for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
-                end_dt = datetime.fromisoformat(round_metadata['end'])
-                if 'end_post' in round_metadata or not (cur_time - end_dt).total_seconds() >= deadline_leeway_seconds:
-                    continue
-
-                print(f"Announcing {puzzle_name} results")
-                try:
-                    await self.puzzle_submission_locks[puzzle_name].lock_and_wait_for_submitters()
-                    results_str, standings_delta = self.get_round_results(tournament_dir, tournament_metadata, puzzle_name)
-                except Exception as e:
-                    print(e)
-                    continue
-
-                # Increment the tournament's standings
-                with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:
-                    standings = json.load(f)
-
-                for name, points in standings_delta.items():
-                    if name not in standings:
-                        standings[name] = 0
-                    standings[name] += points
-
-                with open(tournament_dir / 'standings.json', 'w', encoding='utf-8') as f:
-                    json.dump(standings, f)
-
-                # Embed doesn't seem to be wide enough for tables, use code block
-                announcement = f"{round_metadata['round_name']} ({puzzle_name}) Results"
-                announcement += f"\n```\n{results_str}\n```"
-
-                # TODO: Add current overall tournament standings?
-
-                # TODO: Also attach blurbs.txt
-
-                solns_file = tournament_dir / round_metadata['dir'] / 'solutions.txt'
-                msg = await channel.send(announcement, file=discord.File(str(solns_file), filename=solns_file.name))
-                round_metadata['end_post'] = msg.jump_url
-
-                del self.puzzle_submission_locks[puzzle_name]
-
-            # If the tournament has ended, also announce the tournament results
-            end_dt = datetime.fromisoformat(tournament_metadata['end'])
-            if (cur_time - end_dt).total_seconds() >= deadline_leeway_seconds:
-                print("Announcing tournament results")
-                announcement = f"{tournament_metadata['name']} Results"
-                announcement += f"\n```\n{self.standings_str(tournament_dir)}\n```"
-
-                msg = await channel.send(announcement)
-                tournament_metadata['end_post'] = msg.jump_url
-
-                self.ACTIVE_TOURNAMENT_FILE.unlink()
-
-            with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as tm_f:
-                json.dump(tournament_metadata, tm_f, ensure_ascii=False, indent=4)
 
 bot.add_cog(Tournament(bot))
 
