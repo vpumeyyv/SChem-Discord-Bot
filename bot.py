@@ -256,10 +256,10 @@ class Tournament(commands.Cog):  # name="Help text name?"
     def hosts(self):
         hosts_json_file = self.TOURNAMENTS_DIR / 'hosts.json'
         if not hosts_json_file.exists():
-            return []
+            return set()
 
         with open(hosts_json_file, encoding='utf-8') as f:
-            return json.load(f)['hosts']
+            return set(json.load(f)['hosts'])
 
     @commands.command(name='tournament-hosts')
     @is_host
@@ -278,10 +278,10 @@ class Tournament(commands.Cog):  # name="Help text name?"
         hosts = self.hosts()
         if discord_tag in hosts:
             raise ValueError("Given user is already a tournament host")
-        hosts.append(discord_tag)
+        hosts.add(discord_tag)
 
         with open(self.TOURNAMENTS_DIR / 'hosts.json', 'w', encoding='utf-8') as f:
-            json.dump({'hosts': hosts}, f)
+            json.dump({'hosts': list(hosts)}, f)
 
         await ctx.send(f"{discord_tag} added to tournament hosts.")
 
@@ -293,11 +293,11 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
         hosts = self.hosts()
         if discord_tag not in hosts:
-            raise ValueError("Given user is already a tournament host")
-        hosts.append(discord_tag)
+            raise ValueError("Given user is not a tournament host")
+        hosts.remove(discord_tag)
 
         with open(self.TOURNAMENTS_DIR / 'hosts.json', 'w', encoding='utf-8') as f:
-            json.dump({'hosts': hosts}, f)
+            json.dump({'hosts': list(hosts)}, f)
 
         await ctx.send(f"{discord_tag} removed from tournament hosts.")
 
