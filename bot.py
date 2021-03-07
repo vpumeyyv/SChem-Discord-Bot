@@ -592,8 +592,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
             if datetime.now(timezone.utc).isoformat() > round_metadata['start']:
                 timeout_seconds = 30
                 warn_msg = await ctx.send(
-                    f"Warning: This round's start date ({round_metadata['start']}) has already passed and"
-                    + " deleting it will delete any player solutions. Are you sure you wish to continue?"
+                    f"Warning: This round's start date ({self.format_tournament_datetime(round_metadata['start'])}) has"
+                    + " already passed and deleting it will delete any player solutions. Are you sure you wish to continue?"
                     + f"\nReact to this message with ✅ within {timeout_seconds} seconds to delete anyway.")
 
                 def check(reaction, _):
@@ -625,7 +625,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 self.round_results_tasks[puzzle_name].cancel()
                 del self.round_results_tasks[puzzle_name]
 
-        await (ctx.send if msg is None else msg.edit)(f"Successfully deleted {round_name}, `{puzzle_name}`")
+        reply = f"Successfully deleted {round_name}, `{puzzle_name}`"
+        await (ctx.send(reply) if msg is None else msg.edit(content=reply))
 
     # TODO: tournament-update-puzzle? Probably not worth the complexity since depending on what updates old solutions
     #       may or not be invalidated. TO should just warn participants they'll need to resubmit, delete, re-add, and
