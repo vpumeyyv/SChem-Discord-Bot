@@ -41,7 +41,7 @@ async def on_ready():
 @bot.event
 async def on_command_error(ctx, error):
     """Default bot command error handler."""
-    if isinstance(error, commands.CommandNotFound) or isinstance(error, commands.CheckFailure):
+    if isinstance(error, (commands.CommandNotFound, commands.CheckFailure)):
         return  # Avoid logging errors when users put in invalid commands
 
     await ctx.send(str(error))  # Probably bad practice but it makes the commands' code nice...
@@ -126,9 +126,10 @@ class PuzzleSubmissionsLock:
             self.no_submissions_in_progress.set()
 
 
-# Create a decorator for checking if a user has tournament-hosting permissions
-# Unfortunately can't be a method of the Tournament cog since command.check doesn't pass self
+# Used in a decorator for checking if a user has tournament-hosting permissions.
+# Unfortunately can't be part of the Tournament cog since command.check doesn't pass self/cls
 def is_tournament_host(ctx):
+    """Check whether the given user has tournament-hosting permissions."""
     hosts_json_file = Tournament.TOURNAMENTS_DIR / 'hosts.json'
     if not hosts_json_file.exists():
         return False
@@ -157,7 +158,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
     #     slugified_tournament_name_2/
     #     ...
 
-    is_host = commands.check(is_tournament_host)  # Made a class var to reduce shadowing issues
+    # Decorator for host-only commands
+    is_host = commands.check(is_tournament_host)
 
     TOURNAMENTS_DIR = Path(__file__).parent / 'tournaments'  # Left relative so that filesystem paths can't leak into bot msgs
     ACTIVE_TOURNAMENT_FILE = TOURNAMENTS_DIR / 'active_tournament.txt'
@@ -248,15 +250,15 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
         return start_dt.isoformat(), end_dt.isoformat()
 
-    def format_tournament_datetime(self, s):
+    @classmethod
+    def format_tournament_datetime(cls, s):
         """Return the given datetime string (expected to be UTC and as returned by datetime.isoformat()) in a more
         friendly format.
         """
         return ' '.join(s[:-9].split('T')) + ' UTC'  # Remove T and the seconds field, and replace '+00:00' with ' UTC'
 
-    # Note: Command docstrings should be limited to ~80 characters to avoid ugly wraps in any reasonably-sized window
-
     def hosts(self):
+        """Return a set of the users with tournament-hosting permissions."""
         hosts_json_file = self.TOURNAMENTS_DIR / 'hosts.json'
         if not hosts_json_file.exists():
             return set()
@@ -264,6 +266,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         with open(hosts_json_file, encoding='utf-8') as f:
             return set(json.load(f)['hosts'])
 
+    # Note: Command docstrings should be limited to ~80 char lines to avoid ugly wraps in any reasonably-sized window
     @commands.command(name='tournament-hosts')
     @is_host
     async def hosts_cmd(self, ctx):
@@ -272,6 +275,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
     @commands.command(name='add-tournament-host')
     @commands.is_owner()
+    #@commands.dm_only()
     async def add_tournament_host(self, ctx, user: discord.User):
         """Give someone tournament-hosting permissions."""
         discord_tag = str(user)  # e.g. <username>#1234. Guaranteed to be unique
@@ -290,6 +294,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
     @commands.command(name='remove-tournament-host')
     @commands.is_owner()
+    #@commands.dm_only()
     async def remove_tournament_host(self, ctx, user: discord.User):
         """Remove someone's tournament-hosting permissions."""
         discord_tag = str(user)  # e.g. <username>#1234. Guaranteed to be unique
@@ -306,6 +311,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
     @commands.command(name='tournament-create')
     @is_host
+    #@commands.dm_only()
     async def tournament_create(self, ctx, name, start, end):
         """Create a tournament.
 
@@ -358,6 +364,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
     @commands.command(name='tournament-update')
     @is_host
+    #@commands.dm_only()
     async def tournament_update(self, ctx, new_name, new_start, new_end):
         """Update the current/pending tournament.
 
@@ -383,7 +390,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
                 # If we're modifying the start date, we do have to make sure it's in the future
                 if new_start < datetime.now(timezone.utc).isoformat():
-                    raise ValueError(f"New start date is in past")
+                    raise ValueError("New start date is in past")
 
                 # Check that this doesn't violate any puzzle start dates
                 for round_metadata in tournament_metadata['rounds'].values():
@@ -447,7 +454,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         await ctx.send(reply)
 
     # TODO: @commands.command(name='tournament-delete')  # Is this existing too dangerous?
-    #                                                    # In any case tournament-update should besufficient for now
+    #                                                    # In any case tournament-update should be sufficient for now
 
     def get_puzzle_name(self, tournament_metadata, round_or_puzzle_name):
         """Given a string, return the puzzle name for any puzzle/round matching it case-insensitively, else None."""
@@ -459,6 +466,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
     # TODO: Puzzle flavour text
     @commands.command(name='tournament-add-puzzle')
     @is_host
+    #@commands.dm_only()
     async def tournament_add_puzzle(self, ctx, round_name, metric, total_points: float, start, end=None):
         """Add a puzzle to the tournament.
 
@@ -563,6 +571,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
     @commands.command(name='tournament-delete-puzzle')
     @is_host
+    #@commands.dm_only()
     async def delete_puzzle(self, ctx, *, round_or_puzzle_name):
         """Delete a round/puzzle."""
         async with self.tournament_metadata_write_lock:
@@ -587,7 +596,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
                     + " deleting it will delete any player solutions. Are you sure you wish to continue?"
                     + f"\nReact to this message with ✅ within {timeout_seconds} seconds to delete anyway.")
 
-                def check(reaction, user):
+                def check(reaction, _):
                     return reaction.message.id == warn_msg.id and str(reaction.emoji) == '✅'
 
                 try:
@@ -844,7 +853,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
             await ctx.send(reply, files=attachments)
 
-    def tournament_announcement(self, tournament_dir, tournament_metadata):
+    def tournament_announcement(self, tournament_metadata):
         """Return the tournament announcement text."""
         announcement = f"**Announcing the {tournament_metadata['name']}**"
         announcement += f"\nEnd date: {self.format_tournament_datetime(tournament_metadata['end'])}"
@@ -924,7 +933,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
                     "Tournament was announced while announcement task was still scheduled"
 
                 print("Announcing tournament")
-                msg = await channel.send(self.tournament_announcement(tournament_dir, tournament_metadata))
+                msg = await channel.send(self.tournament_announcement(tournament_metadata))
                 tournament_metadata['start_post'] = msg.jump_url
 
                 with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
@@ -1087,7 +1096,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
         except Exception as e:
             print(e)
 
-    def ranking_str(self, headers, rows, sort_idx=-1, desc=False, max_col_width=12):
+    @classmethod
+    def ranking_str(cls, headers, rows, sort_idx=-1, desc=False, max_col_width=12):
         """Given an iterable of column headers and list of rows containing strings or numeric types, return a
         pretty-print table including rankings for each row based on the given column and sort direction.
         E.g. Rank results for a puzzle or standings for the tournament.

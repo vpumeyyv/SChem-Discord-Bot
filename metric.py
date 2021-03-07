@@ -26,7 +26,7 @@ METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                     'flip_flops': lambda soln: num_instrs_of_type(soln, InstructionType.FLIP_FLOP),
                     'sensors': lambda soln: num_instrs_of_type(soln, InstructionType.SENSE),
                     'syncs': lambda soln: num_instrs_of_type(soln, InstructionType.SYNC)}
-                    # TODO: 'outputs': lambda soln: completed_outputs(soln)
+                    # TODO: 'outputs': completed_outputs
                     #       requires modifications to tournament validator to accept solutions without an expected
                     #       score if the metric contains 'outputs', and to eval the metric even if the solution crashes
 
@@ -76,8 +76,8 @@ def waldopath(soln):
                     # We've already explored this cell in the current direction and must have already added any branches
                     # starting from this cell, so end this branch
                     continue
-                else:
-                    visited_posn_dirns.add(posn_dirn)
+
+                visited_posn_dirns.add(posn_dirn)
 
                 # Add any new branch
                 if cmd is not None and cmd.type in branching_instr_types:
@@ -103,11 +103,11 @@ def used_bonders(soln):
     num_used_bonders = 0
     for reactor in soln.reactors:
         # TODO: These weren't really meant to be user-exposed, relying on them is a bit sus
-        used_bonders = set(p1 for p1, _, _, in reactor.bond_plus_pairs)
-        used_bonders |= set(p2 for _, p2, _, in reactor.bond_plus_pairs)
-        used_bonders |= set(p1 for p1, _, _, in reactor.bond_minus_pairs)
-        used_bonders |= set(p2 for _, p2, _, in reactor.bond_minus_pairs)
-        num_used_bonders += len(used_bonders)
+        cur_used_bonders = set(p1 for p1, _, _, in reactor.bond_plus_pairs)
+        cur_used_bonders |= set(p2 for _, p2, _, in reactor.bond_plus_pairs)
+        cur_used_bonders |= set(p1 for p1, _, _, in reactor.bond_minus_pairs)
+        cur_used_bonders |= set(p2 for _, p2, _, in reactor.bond_minus_pairs)
+        num_used_bonders += len(cur_used_bonders)
 
     return num_used_bonders
 
@@ -148,7 +148,7 @@ def ast_vars(node):
 
 def ast_operators(node):
     """Return a set of all operators and calls in the given AST, or return an error if any are invalid."""
-    if isinstance(node, ast.Name) or isinstance(node, ast.Num):
+    if isinstance(node, (ast.Name, ast.Num)):
         return set()
     elif isinstance(node, ast.BinOp):
         return set((type(node.op),)) | ast_operators(node.left) | ast_operators(node.right)
@@ -204,7 +204,7 @@ def get_metric_and_terms(soln, metric_str):
     # Calculate all variables the metric needs. Sorted in same order as they appear in METRIC_VAR_TO_FN
     # (this is the order they'll appear as column in results announcements)
     used_vars = ast_vars(ast_tree)
-    vars_dict = {var: METRIC_VAR_TO_FN[var](soln) for var in METRIC_VAR_TO_FN.keys() if var in used_vars}
+    vars_dict = {var: fn(soln) for var, fn in METRIC_VAR_TO_FN.items() if var in used_vars}
 
     return eval_ast(ast_tree, vars_dict), vars_dict
 
