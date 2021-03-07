@@ -10,7 +10,7 @@ from pathlib import Path
 import shutil
 
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from dotenv import load_dotenv
 import schem
 from slugify import slugify
@@ -182,20 +182,23 @@ class Tournament(commands.Cog):  # name="Help text name?"
         if self.ACTIVE_TOURNAMENT_FILE.exists():
             _, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
 
-            # Schedule the relevant tournament announcement if not yet done
+            # Schedule the next announcement task(s).
             if 'start_post' not in tournament_metadata:
                 self.tournament_start_task = self.bot.loop.create_task(self.announce_tournament_start(tournament_metadata))
-            elif 'end_post' not in tournament_metadata:
-                self.tournament_results_task = self.bot.loop.create_task(self.announce_tournament_results(tournament_metadata))
+            else:
+                # Only scheduling these after the tournament start announcement ensures that any puzzle starting at the
+                # same time as the tournament (e.g. test puzzle) will not be announced before the tournament itself
+                for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
+                    if 'start_post' not in round_metadata:
+                        # If the puzzle has not been announced yet, schedule the announcement task
+                        self.round_start_tasks[puzzle_name] = self.bot.loop.create_task(self.announce_round_start(puzzle_name, round_metadata))
+                    elif 'end_post' not in round_metadata:
+                        # If the puzzle has opened but not ended, add a submissions lock and results announcement task
+                        self.puzzle_submission_locks[puzzle_name] = PuzzleSubmissionsLock()
+                        self.round_results_tasks[puzzle_name] = self.bot.loop.create_task(self.announce_round_results(puzzle_name, round_metadata))
 
-            for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
-                if 'start_post' not in round_metadata:
-                    # If the puzzle has not been announced yet, schedule the announcement task
-                    self.round_start_tasks[puzzle_name] = self.bot.loop.create_task(self.announce_round_start(puzzle_name, round_metadata))
-                elif 'end_post' not in round_metadata:
-                    # If the puzzle has opened but not ended, add a submissions lock and results announcement task
-                    self.puzzle_submission_locks[puzzle_name] = PuzzleSubmissionsLock()
-                    self.round_results_tasks[puzzle_name] = self.bot.loop.create_task(self.announce_round_results(puzzle_name, round_metadata))
+                if 'end_post' not in tournament_metadata:
+                    self.tournament_results_task = self.bot.loop.create_task(self.announce_tournament_results(tournament_metadata))
 
     def get_active_tournament_dir_and_metadata(self, is_host=False):
         """Helper to fetch the active tournament directory and metadata. Raise error if there is no active tournament
@@ -348,7 +351,10 @@ class Tournament(commands.Cog):  # name="Help text name?"
             # Schedule the tournament announcement
             self.tournament_start_task = self.bot.loop.create_task(self.announce_tournament_start(tournament_metadata))
 
-        await ctx.send(f"Successfully created {repr(name)}")
+        reply = f"Successfully created {repr(name)}"
+        reply += f", Start: {self.format_tournament_datetime(tournament_metadata['start'])}"
+        reply += f", End: {self.format_tournament_datetime(tournament_metadata['end'])}"
+        await ctx.send(reply)
 
     @commands.command(name='tournament-update')
     @is_host
@@ -511,7 +517,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
             if end is None:
                 end = tournament_metadata['end']
 
-            start, end = self.process_tournament_dates(start, end)  # Format and based temporal sanity checks
+            start, end = self.process_tournament_dates(start, end)  # Format and basic temporal sanity checks
 
             # Also check against the tournament start/end dates
             # String comparisons are safe here because all datetimes have been converted to ISO + UTC format
@@ -540,9 +546,10 @@ class Tournament(commands.Cog):  # name="Help text name?"
             with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
                 json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
 
-            # Schedule the round announcement
-            self.round_start_tasks[level.name] = self.bot.loop.create_task(self.announce_round_start(level.name,
-                                                                                                     tournament_metadata['rounds'][level.name]))
+            # Schedule the round announcement (if the start announcement task has already run and won't do it for us)
+            if 'start_post' in tournament_metadata:
+                self.round_start_tasks[level.name] = \
+                    self.bot.loop.create_task(self.announce_round_start(level.name, tournament_metadata['rounds'][level.name]))
 
             # TODO: Track the history of each player's scores over time and do cool graphs of everyone's metrics going
             #       down as the deadline approaches!
@@ -591,7 +598,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
                 # TODO: Should deleting an already-closed puzzle be allowed?
                 if puzzle_name in self.puzzle_submission_locks:
-                    msg = await ctx.send(f"Waiting for any current submitters...")
+                    msg = await ctx.send("Waiting for any current submitters...")
                     await self.puzzle_submission_locks[puzzle_name].lock_and_wait_for_submitters()
                     del self.puzzle_submission_locks[puzzle_name]
 
@@ -601,11 +608,11 @@ class Tournament(commands.Cog):  # name="Help text name?"
             with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
                 json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
 
-            # Cancel and remove the relevant BG announcement task if the puzzle was not closed
-            if 'start_post' not in round_metadata:
+            # Cancel and remove the relevant BG announcement task for the puzzle if any
+            if puzzle_name in self.round_start_tasks:
                 self.round_start_tasks[puzzle_name].cancel()
                 del self.round_start_tasks[puzzle_name]
-            elif 'end_post' not in round_metadata:
+            elif puzzle_name in self.round_results_tasks:
                 self.round_results_tasks[puzzle_name].cancel()
                 del self.round_results_tasks[puzzle_name]
 
@@ -728,7 +735,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
             new_soln_strs = []
             for cur_soln_str in schem.Solution.split_solutions(solns_str):
-                _, cur_author, last_score, _ = schem.Solution.parse_metadata(cur_soln_str)
+                _, cur_author, _, _ = schem.Solution.parse_metadata(cur_soln_str)
                 if cur_author == author:
                     # Warn the user if their submission regresses the metric score
                     # (we will still allow the submission in case they wanted to submit something sub-optimal for
@@ -753,13 +760,21 @@ class Tournament(commands.Cog):  # name="Help text name?"
         await ctx.message.add_reaction('✅')
         await msg.edit(content=reply)
 
-    # TODO tournament-name-change
     # TODO tournament-submit-fun
+    # TODO tournament-submissions: Return a solutions.txt containing all the player's solutions to currently-open
+    #                              rounds along with a string summarizing their metric scores
+    # TODO tournament-name-change
 
     @commands.command(name='tournament-info')
     #@commands.dm_only()  # Prevent public channel spam and make sure TO can't accidentally leak current round results
     async def tournament_info(self, ctx, *, round_or_puzzle_name=None):
-        """Info on the tournament or specified round/puzzle."""
+        """Info on the tournament or specified round/puzzle.
+
+        round_or_puzzle_name: (Case-insensitive) Return links to the matching
+                              puzzle's announcement (/ results if available) posts.
+                              If not specified, show all puzzle announcement links
+                              and current tournament standings.
+        """
         is_host = is_tournament_host(ctx)
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=is_host)
 
@@ -829,6 +844,13 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
             await ctx.send(reply, files=attachments)
 
+    def tournament_announcement(self, tournament_dir, tournament_metadata):
+        """Return the tournament announcement text."""
+        announcement = f"**Announcing the {tournament_metadata['name']}**"
+        announcement += f"\nEnd date: {self.format_tournament_datetime(tournament_metadata['end'])}"
+
+        return announcement
+
     def round_announcement(self, tournament_dir, tournament_metadata, puzzle_name):
         """Helper to announce_round_start for creating the announcement msg, also used for the TO to preview.
         Return the announcement's embed and puzzle file.
@@ -847,7 +869,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         # Discord's embeds seem to be the only way to do a hyperlink to hide the giant puzzle preview link
         # TODO: description=flavour_text
         embed = discord.Embed(author=tournament_metadata['name'],
-                              title=f"Announcing {round_metadata['round_name']}, {puzzle_name}!")
+                              title=f"**Announcing {round_metadata['round_name']}, {puzzle_name}!**")
         embed.add_field(name='Preview',
                         value=f"[Coranac Site]({CORANAC_SITE}?code={single_line_level_code})",
                         inline=True)
@@ -865,7 +887,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         return embed, discord.File(str(puzzle_file), filename=puzzle_file.name)
 
     async def wait_until(self, dt):
-        """Helper to async sleep until the given Datetime."""
+        """Helper to async sleep until after the given Datetime."""
         # Sleep and check time twice for safety since I've found mixed answers on the accuracy of sleeping for week+
         for i in range(3):
             cur_dt = datetime.now(timezone.utc)
@@ -878,7 +900,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
             elif i == 2:
                 raise Exception(f"wait_until waited until {cur_dt.isoformat()} instead of {dt.isoformat()}")
 
-            await asyncio.sleep(remaining_seconds)
+            await asyncio.sleep(remaining_seconds + 0.1)  # Extra 10th of a sec to ensure we go past the specified time
 
     async def announce_tournament_start(self, tournament_metadata):
         """Wait until the tournament start date and then announce it."""
@@ -902,20 +924,23 @@ class Tournament(commands.Cog):  # name="Help text name?"
                     "Tournament was announced while announcement task was still scheduled"
 
                 print("Announcing tournament")
-                announcement = f"Announcing the {tournament_metadata['name']}"
-                announcement += f"\nEnd date: {self.format_tournament_datetime(tournament_metadata['end'])}"
-
-                msg = await channel.send(announcement)
+                msg = await channel.send(self.tournament_announcement(tournament_dir, tournament_metadata))
                 tournament_metadata['start_post'] = msg.jump_url
 
                 with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
                     json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
 
-            # Schedule the tournament results task
-            self.tournament_results_task = self.bot.loop.create_task(self.announce_tournament_results(tournament_metadata))
+                # Schedule round start announcements
+                # Only scheduling these after the tournament start announcement ensures that any puzzle starting at the
+                # same time as the tournament (e.g. test puzzle) will not be announced before the tournament itself
+                for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
+                    self.round_start_tasks[puzzle_name] = self.bot.loop.create_task(self.announce_round_start(puzzle_name, round_metadata))
 
-            # Remove this task
-            self.tournament_start_task = None
+                # Schedule the tournament results task
+                self.tournament_results_task = self.bot.loop.create_task(self.announce_tournament_results(tournament_metadata))
+
+                # Remove this task
+                self.tournament_start_task = None
         except asyncio.CancelledError:  # TODO: Not needed in py3.8+ when CancelledError subclasses BaseException
             raise
         except Exception as e:
@@ -1044,7 +1069,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
                     "Tournament results were announced while results announcement task was still scheduled"
 
                 print("Announcing tournament results")
-                announcement = f"{tournament_metadata['name']} Results"
+                announcement = f"**{tournament_metadata['name']} Results**"
                 announcement += f"\n```\n{self.standings_str(tournament_dir)}\n```"
 
                 msg = await channel.send(announcement)
