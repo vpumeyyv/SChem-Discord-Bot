@@ -46,7 +46,7 @@ async def on_command_error(ctx, error):
 
     await ctx.send(str(error))  # Probably bad practice but it makes the commands' code nice...
 
-@bot.command(name='run', aliases=['score', 'validate', 'check'])
+@bot.command(name='run', aliases=['r', 'score', 'validate', 'check'])
 async def run(ctx):
     """Run/validate the attached solution file.
     Must be a Community Edition export.
@@ -267,7 +267,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
             return set(json.load(f)['hosts'])
 
     # Note: Command docstrings should be limited to ~80 char lines to avoid ugly wraps in any reasonably-sized window
-    @commands.command(name='tournament-hosts')
+    @commands.command(name='tournament-hosts', aliases=['th'])
     @is_host
     async def hosts_cmd(self, ctx):
         """List all tournament hosts."""
@@ -309,7 +309,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
         await ctx.send(f"{discord_tag} removed from tournament hosts.")
 
-    @commands.command(name='tournament-create')
+    @commands.command(name='tournament-create', aliases=['tc'])
     @is_host
     #@commands.dm_only()
     async def tournament_create(self, ctx, name, start, end):
@@ -362,7 +362,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         reply += f", End: {self.format_tournament_datetime(tournament_metadata['end'])}"
         await ctx.send(reply)
 
-    @commands.command(name='tournament-update')
+    @commands.command(name='tournament-update', aliases=['tu'])
     @is_host
     #@commands.dm_only()
     async def tournament_update(self, ctx, new_name, new_start, new_end):
@@ -464,7 +464,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 return cur_puzzle_name
 
     # TODO: Puzzle flavour text
-    @commands.command(name='tournament-add-puzzle')
+    @commands.command(name='tournament-add-puzzle', aliases=['tap'])
     @is_host
     #@commands.dm_only()
     async def tournament_add_puzzle(self, ctx, round_name, metric, total_points: float, start, end=None):
@@ -650,7 +650,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
     #       - limit user submissions to like 2 per minute
 
     # TODO: Accept blurb: https://discordpy.readthedocs.io/en/latest/ext/commands/commands.html#keyword-only-arguments
-    @commands.command(name='tournament-submit')
+    @commands.command(name='tournament-submit', aliases=['ts'])
     #@commands.dm_only()  # TODO: Give the bot permission to delete !tournament-submit messages from public channels
                           #       since someone will inevitably forget to use DMs
     async def tournament_submit(self, ctx):
@@ -787,7 +787,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
     #                              rounds along with a string summarizing their metric scores
     # TODO tournament-name-change
 
-    @commands.command(name='tournament-info')
+    @commands.command(name='tournament-info', aliases=['ti'])
     #@commands.dm_only()  # Prevent public channel spam and make sure TO can't accidentally leak current round results
     async def tournament_info(self, ctx, *, round_or_puzzle_name=None):
         """Info on the tournament or specified round/puzzle.
