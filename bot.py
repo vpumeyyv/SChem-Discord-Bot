@@ -352,7 +352,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 json.dump({}, f, ensure_ascii=False, indent=4)
 
             with open(tournament_dir / 'standings.json', 'w', encoding='utf-8') as f:
-                json.dump({}, f, ensure_ascii=False, indent=4)
+                json.dump({'rounds':{}, 'total': {}}, f, ensure_ascii=False, indent=4)
 
             # Schedule the tournament announcement
             self.tournament_start_task = self.bot.loop.create_task(self.announce_tournament_start(tournament_metadata))
@@ -605,12 +605,24 @@ class Tournament(commands.Cog):  # name="Help text name?"
                     await ctx.send('Puzzle not deleted!')
                     return
 
-                # TODO: Should deleting an already-closed puzzle be allowed?
                 if puzzle_name in self.puzzle_submission_locks:
                     msg = await ctx.send("Waiting for any current submitters...")
                     await self.puzzle_submission_locks[puzzle_name].lock_and_wait_for_submitters()
                     del self.puzzle_submission_locks[puzzle_name]
 
+            # Subtract this puzzle from the tournament standings if its results have already been tallied
+            if 'end_post' in round_metadata:
+                with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:
+                    standings = json.load(f)
+
+                for player, points in standings['rounds'][puzzle_name]:
+                    standings['total'][player] -= points
+                del standings['rounds'][puzzle_name]
+
+                with open(tournament_dir / 'standings.json', 'w', encoding='utf-8') as f:
+                    json.dump(standings, f)
+
+            # Remove the round directory and metadata
             shutil.rmtree(round_dir)
             del tournament_metadata['rounds'][puzzle_name]
 
@@ -1029,10 +1041,12 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:
                     standings = json.load(f)
 
-                for name, points in standings_delta.items():
-                    if name not in standings:
-                        standings[name] = 0
-                    standings[name] += points
+                standings['rounds'][puzzle_name] = standings_delta
+                for player, points in standings_delta.items():
+                    if points > 0:
+                        if player not in standings['total']:
+                            standings['total'][player] = 0
+                        standings['total'][player] += points
 
                 with open(tournament_dir / 'standings.json', 'w', encoding='utf-8') as f:
                     json.dump(standings, f)
@@ -1190,7 +1204,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:
             standings = json.load(f)
 
-        return self.ranking_str(('Name', 'Score'), standings.items(), desc=True)
+        return self.ranking_str(('Name', 'Score'), standings['total'].items(), desc=True)
 
 
 bot.add_cog(Tournament(bot))
