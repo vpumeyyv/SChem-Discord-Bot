@@ -171,8 +171,8 @@ def ast_operators(node):
 
 def validate_metric(metric_str):
     """Raise an error if the given metric string is unparsable."""
-    # Allow specifying powers as either ^ or **
-    metric_str = metric_str.replace('^', '**')
+    # Handle vars/fns case-insensitively and allow specifying powers as either ^ or **
+    metric_str = metric_str.lower().replace('^', '**')
 
     # Parse the string as AST
     metric_ast = ast.parse(metric_str, mode='eval').body
@@ -195,8 +195,8 @@ def get_metric_and_terms(soln, metric_str):
         waldos: Number of non-empty waldos in the solution.
         waldopath: Number of reactor cells crossed by a waldopath
     """
-    # Allow specifying powers as either ^ or **
-    metric_str = metric_str.replace('^', '**')
+    # Handle vars/fns case-insensitively and allow specifying powers as either ^ or **
+    metric_str = metric_str.lower().replace('^', '**')
 
     # Parse the metric into an AST
     ast_tree = ast.parse(metric_str, mode='eval').body

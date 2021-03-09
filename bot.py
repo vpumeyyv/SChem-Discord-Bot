@@ -1155,8 +1155,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
         embed.add_field(name='Preview',
                         value=f"[Coranac Site]({CORANAC_SITE}?code={single_line_level_code})",
                         inline=True)
-        embed.add_field(name='Metric', value=round_metadata['metric'], inline=True)
-        embed.add_field(name='Points', value=round_metadata['total_points'], inline=True)
+        embed.add_field(name='Metric', value=f"`{round_metadata['metric']}`", inline=True)
+        embed.add_field(name='Points', value=round_metadata['points'], inline=True)
 
         # Make the ISO datetime string friendlier-looking (e.g. no +00:00) or indicate puzzle is tournament-long
         round_end = self.format_tournament_datetime(round_metadata['end'])
