@@ -431,7 +431,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
             if new_end != tournament_metadata['end']:
                 # Change the end date of any puzzles that ended at the same time as the tournament
                 # For all other puzzles, check their end dates weren't violated
-                for round_metadata in tournament_metadata['rounds'].values():
+                for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
                     # Again all below date comparisons safe since everything is ISO and UTC format
                     if round_metadata['end'] == tournament_metadata['end']:
                         # Check round start isn't violated before we modify round end
@@ -439,6 +439,12 @@ class Tournament(commands.Cog):  # name="Help text name?"
                             raise ValueError(f"New end date is before start of {repr(round_metadata['round_name'])}")
 
                         round_metadata['end'] = new_end
+
+                        # Update the results announcement task if it exists
+                        if puzzle_name in self.round_results_tasks:
+                            self.round_results_tasks[puzzle_name].cancel()
+                            self.tournament_results_task = self.bot.loop.create_task(self.announce_round_results(puzzle_name, round_metadata))
+
                         modified_round_ends.append(round_metadata['round_name'])
                     elif new_end < round_metadata['end']:
                         raise ValueError(f"New end date is before end of {repr(round_metadata['round_name'])}")
