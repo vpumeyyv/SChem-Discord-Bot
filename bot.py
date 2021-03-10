@@ -735,115 +735,136 @@ class Tournament(commands.Cog):  # name="Help text name?"
         except UnicodeDecodeError as e:
             raise Exception("Attachment must be a plaintext file (containing a Community Edition export).") from e
 
-        level_name, author, expected_score, soln_name = schem.Solution.parse_metadata(soln_str)
-        soln_descr = schem.Solution.describe(level_name, author, expected_score, soln_name)
+        soln_strs = list(schem.Solution.split_solutions(soln_str))
+        assert len(soln_strs) != 0, "Attachment does not contain SpaceChem solution string(s)"
+        assert len(soln_strs) == 1 or is_tournament_host(ctx), "Expected only one solution in the attached file."
 
-        # Discord tag used to ensure no name collision errors or exploits, and so the host knows who to message in case
-        # of any issues
-        discord_tag = str(ctx.message.author)  # e.g. <username>#1234. Guaranteed to be unique
+        reaction = '✅'
+        for soln_str in soln_strs:
+            msg = None
+            try:
+                level_name, author, expected_score, soln_name = schem.Solution.parse_metadata(soln_str)
+                soln_descr = schem.Solution.describe(level_name, author, expected_score, soln_name)
 
-        # Register this discord_tag: author_name mapping if it is not already registered
-        # If the solution's author_name conflicts with that of another player, request they change it
-        # If the author_name conflicts with that already submitted by this discord_id, warn them but proceed as if
-        # they purposely renamed themselves
-        with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
-            participants = json.load(f)
+                # Skip participant name checks for the TO backdoor
+                if not is_tournament_host(ctx):
+                    # Discord tag used to ensure no name collision errors or exploits, and so the host knows who to message in case
+                    # of any issues
+                    discord_tag = str(ctx.message.author)  # e.g. <username>#1234. Guaranteed to be unique
 
-        if discord_tag in participants:
-            if author != participants[discord_tag]:
-                # TODO: Could allow name changes but it would be a lot of work and potentially confusing for the
-                #       other participants, probably should only do this case-by-case and manually
-                raise ValueError(f"Given author name `{author}` doesn't match your prior submissions':"
-                                 + f" `{participants[discord_tag]}`; please talk to the tournament host if you would"
-                                 + " like a name change.")
-        else:
-            # First submission
-            if author in participants.values():
-                raise PermissionError(f"Solution author name `{author}` is already in use by another participant,"
-                                      + " please choose another (or login to the correct discord account).")
+                    # Register this discord_tag: author_name mapping if it is not already registered
+                    # If the solution's author_name conflicts with that of another player, request they change it
+                    # If the author_name conflicts with that already submitted by this discord_id, warn them but proceed as if
+                    # they purposely renamed themselves
+                    with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
+                        participants = json.load(f)
 
-            participants[discord_tag] = author
+                    if discord_tag in participants:
+                        if author != participants[discord_tag]:
+                            # TODO: Could allow name changes but it would be a lot of work and potentially confusing for the
+                            #       other participants, probably should only do this case-by-case and manually
+                            raise ValueError(f"Given author name `{author}` doesn't match your prior submissions':"
+                                             + f" `{participants[discord_tag]}`; please talk to the tournament host if you would"
+                                             + " like a name change.")
+                    else:
+                        # First submission
+                        if author in participants.values():
+                            raise PermissionError(f"Solution author name `{author}` is already in use by another participant,"
+                                                  + " please choose another (or login to the correct discord account).")
 
-        with open(tournament_dir / 'participants.json', 'w', encoding='utf-8') as f:
-            json.dump(participants, f, ensure_ascii=False, indent=4)
+                        participants[discord_tag] = author
 
-        # Since otherwise future puzzle names could in theory be searched for, make sure we return the same message
-        # whether a puzzle does not exist or is not yet open for submissions
-        unknown_level_exc = ValueError(f"No active tournament level `{level_name}`; ensure the first line of your solution"
-                                       + " has the correct level name or check the start/end dates of the given puzzle.")
-        if level_name not in tournament_metadata['rounds']:
-            raise unknown_level_exc
-        round_metadata = tournament_metadata['rounds'][level_name]
+                    with open(tournament_dir / 'participants.json', 'w', encoding='utf-8') as f:
+                        json.dump(participants, f, ensure_ascii=False, indent=4)
 
-        round_dir = tournament_dir / round_metadata['dir']
+                # Since otherwise future puzzle names could in theory be searched for, make sure we return the same message
+                # whether a puzzle does not exist or is not yet open for submissions
+                unknown_level_exc = ValueError(f"No active tournament level `{level_name}`; ensure the first line of your solution"
+                                               + " has the correct level name or check the start/end dates of the given puzzle.")
+                if level_name not in tournament_metadata['rounds']:
+                    raise unknown_level_exc
+                round_metadata = tournament_metadata['rounds'][level_name]
 
-        # Check that the message was sent during the round's submission period
-        if ctx.message.edited_at is not None:
-            # Cover any possible late-submission exploits if we ever allow bot to respond to edits
-            msg_time = ctx.message.edit_at.replace(tzinfo=timezone.utc)
-        else:
-            msg_time = ctx.message.created_at.replace(tzinfo=timezone.utc)
+                round_dir = tournament_dir / round_metadata['dir']
 
-        if msg_time < datetime.fromisoformat(round_metadata['start']):
-            raise unknown_level_exc
-        elif msg_time > datetime.fromisoformat(round_metadata['end']):
-            raise Exception(f"Submissions for `{level_name}` have closed.")
-
-        # TODO: Check if the tournament host set a higher max submission cycles value, otherwise default to e.g.
-        #       10,000,000 and break here if that's violated
-
-        with self.puzzle_submission_locks[level_name]:
-            level = self.get_level(round_dir)
-
-            # Verify the solution
-            # TODO: Provide seconds or minutes ETA based on estimate of 2,000,000 cycles / min (/ reactor?)
-            msg = await ctx.send(f"Running {soln_descr}, this should take < 30s barring an absurd cycle count...")
-
-            solution = schem.Solution(level, soln_str)
-
-            # Call the SChem validator in a thread so the bot isn't blocked
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(thread_pool_executor, solution.validate)
-
-            # TODO: if metric uses 'outputs' as a var, we should instead catch any run errors (or just PauseException,
-            #       to taste) and pass the post-run solution object to eval_metric regardless
-
-            # Calculate the solution's metric score
-            metric = round_metadata['metric']
-            soln_metric_score = eval_metric(solution, metric)
-
-            reply = f"Successfully validated {soln_descr}, metric score: {format_metric(soln_metric_score, decimals=3)}"
-
-            # Update solutions.txt
-            with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as f:
-                solns_str = f.read()
-
-            new_soln_strs = []
-            for cur_soln_str in schem.Solution.split_solutions(solns_str):
-                _, cur_author, _, _ = schem.Solution.parse_metadata(cur_soln_str)
-                if cur_author == author:
-                    # Warn the user if their submission regresses the metric score
-                    # (we will still allow the submission in case they wanted to submit something sub-optimal for
-                    #  style/meme/whatever reasons)
-                    # Note: This re-does the work of calculating the old metric but is simpler and allows the TO to
-                    #       modify the metric after the puzzle opens if necessary
-                    old_metric_score = eval_metric(schem.Solution(level, cur_soln_str), metric)
-                    if soln_metric_score > old_metric_score:
-                        reply += "\nWarning: This solution regresses your last submission's metric score, previously: " \
-                                 + format_metric(old_metric_score, decimals=3)
+                # Check that the message was sent during the round's submission period
+                if ctx.message.edited_at is not None:
+                    # Cover any possible late-submission exploits if we ever allow bot to respond to edits
+                    msg_time = ctx.message.edit_at.replace(tzinfo=timezone.utc)
                 else:
-                    new_soln_strs.append(cur_soln_str)
+                    msg_time = ctx.message.created_at.replace(tzinfo=timezone.utc)
 
-            new_soln_strs.append(soln_str)
+                if msg_time < datetime.fromisoformat(round_metadata['start']):
+                    raise unknown_level_exc
+                elif msg_time > datetime.fromisoformat(round_metadata['end']):
+                    raise Exception(f"Submissions for `{level_name}` have closed.")
 
-            with open(round_dir / 'solutions.txt', 'w', encoding='utf-8') as f:
-                # Make sure not to write windows newlines or python will double the carriage returns
-                f.write('\n'.join(new_soln_strs))
+                # TODO: Check if the tournament host set a higher max submission cycles value, otherwise default to e.g.
+                #       10,000,000 and break here if that's violated
 
-        # TODO: Update submissions_history.txt with time, name, score, and blurb
+                with self.puzzle_submission_locks[level_name]:
+                    level = self.get_level(round_dir)
 
-        await ctx.message.add_reaction('✅')
-        await msg.edit(content=reply)
+                    # Verify the solution
+                    # TODO: Provide seconds or minutes ETA based on estimate of 2,000,000 cycles / min (/ reactor?)
+                    msg = await ctx.send(f"Running {soln_descr}, this should take < 30s barring an absurd cycle count...")
+
+                    solution = schem.Solution(level, soln_str)
+
+                    # Call the SChem validator in a thread so the bot isn't blocked
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(thread_pool_executor, solution.validate)
+
+                    # TODO: if metric uses 'outputs' as a var, we should instead catch any run errors (or just PauseException,
+                    #       to taste) and pass the post-run solution object to eval_metric regardless
+
+                    # Calculate the solution's metric score
+                    metric = round_metadata['metric']
+                    soln_metric_score = eval_metric(solution, metric)
+
+                    reply = f"Successfully validated {soln_descr}, metric score: {format_metric(soln_metric_score, decimals=3)}"
+
+                    # Update solutions.txt
+                    with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as f:
+                        solns_str = f.read()
+
+                    new_soln_strs = []
+                    for cur_soln_str in schem.Solution.split_solutions(solns_str):
+                        _, cur_author, _, _ = schem.Solution.parse_metadata(cur_soln_str)
+                        if cur_author == author:
+                            # Warn the user if their submission regresses the metric score
+                            # (we will still allow the submission in case they wanted to submit something sub-optimal for
+                            #  style/meme/whatever reasons)
+                            # Note: This re-does the work of calculating the old metric but is simpler and allows the TO to
+                            #       modify the metric after the puzzle opens if necessary
+                            old_metric_score = eval_metric(schem.Solution(level, cur_soln_str), metric)
+                            if soln_metric_score > old_metric_score:
+                                reply += "\nWarning: This solution regresses your last submission's metric score, previously: " \
+                                         + format_metric(old_metric_score, decimals=3)
+                                if reaction == '✅':
+                                    reaction = '⚠'
+                        else:
+                            new_soln_strs.append(cur_soln_str)
+
+                    new_soln_strs.append(soln_str)
+
+                    with open(round_dir / 'solutions.txt', 'w', encoding='utf-8') as f:
+                        # Make sure not to write windows newlines or python will double the carriage returns
+                        f.write('\n'.join(new_soln_strs))
+
+                    # TODO: Update submissions_history.txt with time, name, score, and blurb
+
+                    await msg.edit(content=reply)
+            except Exception as e:
+                reaction = '❌'
+                print(f"{type(e).__name__}: {e}")
+                # Replace the 'Running...' message if it got that far
+                if msg is not None:
+                    await msg.edit(content=f"{type(e).__name__}: {e}")
+                else:
+                    await ctx.send(f"{type(e).__name__}: {e}")
+
+        await ctx.message.add_reaction(reaction)
 
     # TODO: Accept blurb: https://discordpy.readthedocs.io/en/latest/ext/commands/commands.html#keyword-only-arguments
     @commands.command(name='tournament-submit-fun', aliases=['tsf', 'tournament-submit-non-scoring', 'tsns'])
@@ -1525,7 +1546,6 @@ class Tournament(commands.Cog):  # name="Help text name?"
             standings = json.load(f)
 
         return self.ranking_str(('Name', 'Score'), standings['total'].items(), desc=True)
-
 
 bot.add_cog(Tournament(bot))
 
