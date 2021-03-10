@@ -44,6 +44,7 @@ async def on_command_error(ctx, error):
     if isinstance(error, (commands.CommandNotFound, commands.CheckFailure)):
         return  # Avoid logging errors when users put in invalid commands
 
+    print(f"{type(error).__name__}: {error}")
     await ctx.send(str(error))  # Probably bad practice but it makes the commands' code nice...
 
 @bot.command(name='run', aliases=['r', 'score', 'validate', 'check'])
@@ -77,6 +78,30 @@ async def run(ctx):
 # async def submit(ctx):
 #     # Sneakily react with a green check mark on msgs to the leaderboard-bot?
 #     # Auto-fetch pastebin link from youtube video description
+
+
+def split_by_char_limit(s, limit=1900):
+    """Given a string, return it split it on newlines into chunks under the given char limit.
+
+    Raise an exception if a single line exceeds the char limit.
+
+    max_chunk_size: Maximum size of individual strings. Default 1900 to fit comfortably under discord's 2000-char limit.
+    """
+    chunks = []
+
+    while s:
+        # Terminate if s is under the chunk size
+        if len(s) <= limit:
+            chunks.append(s)
+            return chunks
+
+        # Find the last newline before the chunk limit
+        cut_idx = s.rfind("\n", 0, limit + 1)  # Look for the newline closest to the char limit
+        if cut_idx == -1:
+            raise ValueError(f"Can't split message with line > {limit} chars")
+
+        chunks.append(s[:cut_idx])
+        s = s[cut_idx + 1:]
 
 
 class PuzzleSubmissionsLock:
@@ -1103,9 +1128,9 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
         if is_host and 'start_post' not in round_metadata:
             # If this is the host checking an unannounced puzzle, simply preview the announcement post for them
-            reply = f"On {self.format_tournament_datetime(round_metadata['start'])} the following announcement will be sent:"
+            await ctx.send(f"On {self.format_tournament_datetime(round_metadata['start'])} the following announcement will be sent:")
             embed, attachment = self.round_announcement(tournament_dir, tournament_metadata, puzzle_name)
-            await ctx.send(reply, embed=embed, file=attachment)
+            await ctx.send(embed=embed, file=attachment)
             return
 
         embed = discord.Embed(title=f"{round_metadata['round_name']}, {puzzle_name}",
@@ -1117,14 +1142,17 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
         await ctx.send(embed=embed)
 
-        # If this is the TO, preview the results post for them (in a separate msg so the embed goes on top)
+        # If this is the TO, preview the results post for them (in separate msgs so the embed goes on top)
         if is_host and not 'end_post' in round_metadata:
-            announcement, attachments, _ = self.round_results_announcement_and_standings_change(tournament_dir, tournament_metadata, puzzle_name)
+            await ctx.send(f"On {self.format_tournament_datetime(round_metadata['end'])} the following announcement will be sent:")
 
-            reply = f"On {self.format_tournament_datetime(round_metadata['end'])} the following announcement will be sent:"
-            reply += '\n' + announcement
-
-            await ctx.send(reply, files=attachments)
+            # Send each of the sub-2000 char announcement messages, adding the attachments to the last one
+            msg_strings, attachments, _ = self.round_results_announcement_and_standings_change(tournament_dir, tournament_metadata, puzzle_name)
+            for i, msg_string in enumerate(msg_strings):
+                if i < len(msg_strings) - 1:
+                    await ctx.send(msg_string)
+                else:
+                    await ctx.send(msg_string, files=attachments)
 
     def tournament_announcement(self, tournament_metadata):
         """Return the tournament announcement text."""
@@ -1294,7 +1322,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
                 print(f"Announcing {puzzle_name} results")
                 await self.puzzle_submission_locks[puzzle_name].lock_and_wait_for_submitters()
-                announcement, attachments, standings_delta = \
+                msg_strings, attachments, standings_delta = \
                     self.round_results_announcement_and_standings_change(tournament_dir, tournament_metadata, puzzle_name)
 
                 # Increment the tournament's standings
@@ -1311,8 +1339,16 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 with open(tournament_dir / 'standings.json', 'w', encoding='utf-8') as f:
                     json.dump(standings, f)
 
-                msg = await channel.send(announcement, files=attachments)
-                round_metadata['end_post'] = msg.jump_url
+                # Send each of the sub-2000 char announcement messages, adding the attachments to the last one
+                # Set the end post link to that of the first sent message
+                for i, msg_string in enumerate(msg_strings):
+                    if i < len(msg_strings) - 1:
+                        msg = await channel.send(msg_string)
+                    else:
+                        msg = await channel.send(msg_string, files=attachments)
+
+                    if i == 0:
+                        round_metadata['end_post'] = msg.jump_url
 
                 del self.puzzle_submission_locks[puzzle_name]
 
@@ -1403,8 +1439,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
         return '\n'.join('  '.join(s.ljust(min_widths[i]) for i, s in enumerate(row)) for row in formatted_rows)
 
     def round_results_announcement_and_standings_change(self, tournament_dir, tournament_metadata, puzzle_name):
-        """Given tournament dir/metadata and a specified puzzle, return a string of the announcement message text for
-        the puzzle results, a list of attachments, and a dict indicating the changes to the standings.
+        """Given tournament dir/metadata and a specified puzzle, return a list of strings of the announcement message(s)
+        text for the puzzle results, a list of attachments, and a dict indicating the changes to the standings.
         """
         round_metadata = tournament_metadata['rounds'][puzzle_name]
         round_dir = tournament_dir / round_metadata['dir']
@@ -1447,9 +1483,13 @@ class Tournament(commands.Cog):  # name="Help text name?"
         if not solutions:
             col_headers = ('Player', 'Cycles', 'Reactors', 'Symbols', 'Metric', 'Rel. Metric', 'Points')
 
-        # Embed doesn't seem to be wide enough for tables, use code block
-        announcement = f"**{round_metadata['round_name']} ({puzzle_name}) Results**"
-        announcement += f"\n```\n{self.ranking_str(col_headers, results, sort_idx=-3)}\n```"
+        # Embed not used as it is not wide enough for tables
+        # Split the result table to fit under discord's 2000-character message limit
+        title_line = f"**{round_metadata['round_name']} ({puzzle_name}) Results**\n"
+        results_table_chunks = split_by_char_limit(self.ranking_str(col_headers, results, sort_idx=-3),
+                                                   1999 - len(title_line) - 8)  # -8 for table backticks/newlines)
+        msg_strings = [f"```\n{s}\n```" for s in results_table_chunks]
+        msg_strings[0] = title_line + msg_strings[0]
 
         # TODO: Add current overall tournament standings?
 
@@ -1464,15 +1504,20 @@ class Tournament(commands.Cog):  # name="Help text name?"
         if fun_solns_str:
             fun_solutions = [schem.Solution(level, s) for s in schem.Solution.split_solutions(fun_solns_str)]
             fun_col_headers = ('Player', 'Score', 'Solution Name')
-            fun_solns_table_rows = [(soln.author, soln.expected_score, soln.name if soln.name else '')
-                                    for soln in fun_solutions]
+            fun_table_rows = [(soln.author, soln.expected_score, soln.name if soln.name else '')
+                              for soln in fun_solutions]
 
-            announcement += "\n**Non-Scoring Submissions**"
-            announcement += f"\n```\n{self.ranking_str(fun_col_headers, fun_solns_table_rows, sort_idx=None)}\n```"
+            title_line = "**Non-Scoring Submissions**\n"
+            # Split the table up so it will just fit under discord's 2000-char msg limit even with the title prepended
+            fun_table_chunks = split_by_char_limit(self.ranking_str(fun_col_headers, fun_table_rows, sort_idx=-3),
+                                                   1999 - len(title_line) - 8)  # -8 for table backticks/newlines
+            fun_table_msgs = [f"```\n{s}\n```" for s in fun_table_chunks]
+            fun_table_msgs[0] = title_line + fun_table_msgs[0]
+            msg_strings.extend(fun_table_msgs)
 
             attachments.append(discord.File(str(fun_solns_file), filename=fun_solns_file.name))
 
-        return announcement, attachments, standings_scores
+        return msg_strings, attachments, standings_scores
 
     def standings_str(self, tournament_dir):
         """Given a tournament's directory, return a string of the tournament standings"""
