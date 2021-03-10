@@ -510,7 +510,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
     @commands.command(name='tournament-add-puzzle', aliases=['tap'])
     @is_host
     #@commands.dm_only()
-    async def tournament_add_puzzle(self, ctx, round_name, metric, total_points: float, start, end=None):
+    async def tournament_add_puzzle(self, ctx, round_name, metric, points: float, start, end=None):
         """Add a puzzle to the tournament.
 
         round_name: e.g. "Round 1" or "Bonus 1".
@@ -524,7 +524,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
                                        log() (base 10)
                 Parsed with standard operator precedence (BEDMAS).
                 E.g.: "cycles + 0.1 * symbols + bonders^2"
-        total_points: # of points that the first place player will receive.
+        points: # of points that the first place player will receive.
                       Other players will get points proportional to this based
                       on their relative metric score.
         start: The datetime on which the puzzle will be announced and submissions opened.
@@ -580,7 +580,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
             tournament_metadata['rounds'][level.name] = {'dir': round_dir_name,
                                                          'round_name': round_name,
                                                          'metric': metric,
-                                                         'total_points': total_points,
+                                                         'points': points,
                                                          'start': start,
                                                          'end': end}
 
@@ -1438,7 +1438,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 col_headers = ['Name'] + list(term_values.keys()) + ['Metric', 'Rel. Metric', 'Points']
 
             relative_metric = min_metric_score / metric_score
-            points = round_metadata['total_points'] * relative_metric
+            points = round_metadata['points'] * relative_metric
 
             standings_scores[solution.author] = points
             results.append([solution.author] + list(term_values.values()) + [metric_score, relative_metric, points])
