@@ -720,7 +720,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
             # https://bugs.python.org/issue41255
             try:
                 args = parser.parse_args(f'--{s}' for s in update_fields)
-            except SystemExit as e:
+            except SystemExit:
                 raise Exception("Unrecognized arguments included, double-check `!help tournament-puzzle-update`")
 
             args_dict = vars(args)
@@ -1809,18 +1809,24 @@ class Tournament(commands.Cog):  # name="Help text name?"
         for solution, (metric_score, term_values) in zip(solutions, metric_scores_and_terms):
             assert solution.author not in standings_scores, "solutions.txt unexpectedly contains duplicate player"
 
+            # We'll add a standard-format score column directly and only add extra columns for non-standard metric terms
+            for term_key in ('cycles', 'reactors', 'symbols'):
+                if term_key in term_values:
+                    del term_values[term_key]
+
             if not col_headers:
-                col_headers = ['Name'] + list(term_values.keys()) + ['Metric', 'Rel. Metric', 'Points']
+                col_headers = ['Name', 'Score'] + list(term_values.keys()) + ['Metric', 'Rel. Metric', 'Points']
 
             relative_metric = min_metric_score / metric_score
             points = round_metadata['points'] * relative_metric
 
             standings_scores[solution.author] = points
-            results.append([solution.author] + list(term_values.values()) + [metric_score, relative_metric, points])
+            results.append([solution.author, str(solution.expected_score)] + list(term_values.values())
+                           + [metric_score, relative_metric, points])
 
         # TODO: Shouldn't need a solution to parse the header row; extract these from the metric
         if not solutions:
-            col_headers = ('Player', 'Cycles', 'Reactors', 'Symbols', 'Metric', 'Rel. Metric', 'Points')
+            col_headers = ('Player', 'Score', 'Metric', 'Rel. Metric', 'Points')
 
         # Embed not used as it is not wide enough for tables
         # Split the result table to fit under discord's 2000-character message limit
