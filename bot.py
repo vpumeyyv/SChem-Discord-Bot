@@ -1460,10 +1460,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
                     embed.description += f"\n{round_metadata['round_name']}, {puzzle_name}:" \
                                          + f" Start: {self.format_tournament_datetime(round_metadata['start'])}" \
                                          + f" | End: {self.format_tournament_datetime(round_metadata['end'])}"
-
-            embed.description += f"\n**Standings**:\n```\n{self.standings_str(tournament_dir)}\n```"
-
             await ctx.send(embed=embed)
+            await ctx.send(f"\n**Standings**:\n```\n{self.standings_str(tournament_dir)}\n```")
             return
 
         # Convert to puzzle name
