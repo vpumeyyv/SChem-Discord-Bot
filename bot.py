@@ -769,7 +769,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 if ctx.message.attachments:
                     assert len(ctx.message.attachments) == 1, "Expected at most a single attached puzzle file!"
                     new_puzzle_file = ctx.message.attachments[0]
-                    new_level_code = await self.read_puzzle_attachment(new_puzzle_file)
+                    new_level_code = (await self.read_puzzle_attachment(new_puzzle_file)).strip()
                     level = schem.Level(new_level_code)
 
                     # Make sure the new puzzle name doesn't conflict with any other rounds/puzzles
@@ -792,7 +792,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
                     assert old_puzzle_file is not None, "Internal Error: puzzle file for specified round is missing"
                     with open(old_puzzle_file, 'r', encoding='utf-8') as f:
                         old_level_code = f.read().strip()
-                    assert new_level_code != old_level_code, "Attached puzzle file has not changed, did you mean to update it?"
+                    old_level = schem.Level(old_level_code)
+                    assert level != old_level, "Attached puzzle has not changed, did you mean to update it?"
 
                     # First check whether this puzzle file will invalidate any solutions
                     if 'start_post' in round_metadata:
