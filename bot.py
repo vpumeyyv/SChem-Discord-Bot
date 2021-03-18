@@ -863,12 +863,15 @@ class Tournament(commands.Cog):  # name="Help text name?"
                     if ctx.message.attachments:
                         await ctx.send("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
                         await ctx.send(embed=new_announcement_embed, file=new_announcement_attachment)
-                        await ctx.send("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                                       "The original announcement post will be edited to include a link to the above post.")
+                        edit_note_text = "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" \
+                                         + "The original announcement post will be edited to include a link to the above post."
                         if invalid_soln_authors:
-                            await ctx.send("Additionally, this change to the puzzle invalidated the following players'"
-                                           f" solutions: {', '.join(invalid_soln_authors)}"
-                                           "\nThese players will be DM'd to inform them of their removed solution(s).")
+                            edit_note_text += "\n**Additionally, this change to the puzzle invalidated the following players'" \
+                                              + f" solutions**: {', '.join(invalid_soln_authors)}" \
+                                              + "\nThese players will be DM'd to inform them of their removed solution(s)."
+                        else:
+                            edit_note_text += "\n**No player solutions were invalidated by this puzzle file change.**"
+                        await ctx.send(edit_note_text)
                     else:
                         await ctx.send("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                                        "\nand the original announcement post will be edited to read:")
