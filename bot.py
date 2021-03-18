@@ -1440,6 +1440,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=is_host)
 
         if round_or_puzzle_name is None:
+            # Set up an embed listing all the rounds and their announcement messsages
             embed = discord.Embed(title=tournament_metadata['name'], description="")
 
             if 'start_post' in tournament_metadata:
@@ -1460,8 +1461,19 @@ class Tournament(commands.Cog):  # name="Help text name?"
                     embed.description += f"\n{round_metadata['round_name']}, {puzzle_name}:" \
                                          + f" Start: {self.format_tournament_datetime(round_metadata['start'])}" \
                                          + f" | End: {self.format_tournament_datetime(round_metadata['end'])}"
+
+            # Create a standings table (in chunks under discord's char limit as needed)
+            title_line = "**Standings**\n"
+            standings_table_chunks = split_by_char_limit(self.standings_str(tournament_dir),
+                                                         1999 - len(title_line) - 8)  # -8 for table backticks/newlines
+            standings_msgs = [f"```\n{s}\n```" for s in standings_table_chunks]
+            standings_msgs[0] = title_line + standings_msgs[0]
+
+            # Send all the messages
             await ctx.send(embed=embed)
-            await ctx.send(f"\n**Standings**:\n```\n{self.standings_str(tournament_dir)}\n```")
+            for standings_msg in standings_msgs:
+                await ctx.send(standings_msg)
+
             return
 
         # Convert to puzzle name
@@ -1730,11 +1742,19 @@ class Tournament(commands.Cog):  # name="Help text name?"
                     "Tournament results were announced while results announcement task was still scheduled"
 
                 print("Announcing tournament results")
-                announcement = f"**{tournament_metadata['name']} Results**"
-                announcement += f"\n```\n{self.standings_str(tournament_dir)}\n```"
+                title_line = f"**{tournament_metadata['name']} Results**\n"
+                standings_table_chunks = split_by_char_limit(self.standings_str(tournament_dir),
+                                                             1999 - len(title_line) - 8)  # -8 for table backticks/newlines
+                msg_strings = [f"```\n{s}\n```" for s in standings_table_chunks]
+                msg_strings[0] = title_line + msg_strings[0]
 
-                msg = await channel.send(announcement)
-                tournament_metadata['end_post'] = msg.jump_url
+                # Send each of the sub-2000 char announcement messages, adding the attachments to the last one
+                # Set the end post link to that of the first sent message
+                for i, msg_string in enumerate(msg_strings):
+                    msg = await channel.send(msg_string)
+
+                    if i == 0:
+                        tournament_metadata['end_post'] = msg.jump_url
 
                 self.ACTIVE_TOURNAMENT_FILE.unlink()
 
@@ -1832,7 +1852,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         # Split the result table to fit under discord's 2000-character message limit
         title_line = f"**{round_metadata['round_name']} ({puzzle_name}) Results**\n"
         results_table_chunks = split_by_char_limit(self.ranking_str(col_headers, results, sort_idx=-3),
-                                                   1999 - len(title_line) - 8)  # -8 for table backticks/newlines)
+                                                   1999 - len(title_line) - 8)  # -8 for table backticks/newlines
         msg_strings = [f"```\n{s}\n```" for s in results_table_chunks]
         msg_strings[0] = title_line + msg_strings[0]
 
