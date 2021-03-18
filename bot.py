@@ -363,7 +363,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         hosts.remove(discord_tag)
 
         with open(self.TOURNAMENTS_DIR / 'hosts.json', 'w', encoding='utf-8') as f:
-            json.dump({'hosts': list(hosts)}, f)
+            json.dump({'hosts': list(hosts)}, f, ensure_ascii=False, indent=4)
 
         await ctx.send(f"{discord_tag} removed from tournament hosts.")
 
@@ -501,7 +501,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 raise ValueError("All fields match existing tournament fields.")
 
             with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
-                json.dump(tournament_metadata, f)
+                json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
 
             # If the update was successful and changed a date(s), cancel and replace the relevant BG announcement task
             if 'start date' in updated_fields:
@@ -855,16 +855,13 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
                     # Preview the changes-summary post, the new or edited announcement post, and the names of all players
                     # whose solutions were invalidated, and ask for TO confirmation
-                    plural = "s" if ctx.message.attachments else ""
-
-                    await ctx.send("The specified puzzle has already been opened so the following public announcement"
-                                   f" post{plural} will be made:\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-                    await ctx.send(summary_text)
-
                     if ctx.message.attachments:
-                        await ctx.send("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                        # Edit the 'running solutions...' message
+                        await msg.edit(content="The specified puzzle has already been opened so the following public"
+                                       " announcement posts will be made:\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                        await ctx.send(summary_text)
                         await ctx.send(embed=new_announcement_embed, file=new_announcement_attachment)
-                        edit_note_text = "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" \
+                        edit_note_text = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n" \
                                          + "The original announcement post will be edited to include a link to the above post."
                         if invalid_soln_authors:
                             edit_note_text += "\n**Additionally, this change to the puzzle invalidated the following players'" \
@@ -874,10 +871,14 @@ class Tournament(commands.Cog):  # name="Help text name?"
                             edit_note_text += "\n**No player solutions were invalidated by this puzzle file change.**"
                         await ctx.send(edit_note_text)
                     else:
-                        await ctx.send("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                        await ctx.send("The specified puzzle has already been opened so the following public announcement"
+                                       " post will be made:\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                        await ctx.send(summary_text)
+                        await ctx.send("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                                        "\nand the original announcement post will be edited to read:")
                         await ctx.send(embed=edited_announcement_embed,
                                        file=(await og_announcement.attachments[0].to_file()))
+                        await ctx.send("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
                     # Ask the TO for confirmation before making any changes
                     confirm_msg = await ctx.send("Are you sure you wish to continue?"
@@ -894,6 +895,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
                         # Save the new puzzle file and update the tournament metadata's puzzle name as needed
                         old_puzzle_file.unlink()
                         await new_puzzle_file.save(round_dir / new_puzzle_file.filename)
+                        del tournament_metadata['rounds'][puzzle_name]
+                        tournament_metadata['rounds'][new_puzzle_name] = round_metadata
 
                         # Update solutions.txt and fun_solutions.txt
                         for solns_file_name, cur_soln_strs in valid_soln_strs.items():
@@ -908,7 +911,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
                         # Make the changes-summary post
                         await channel.send(summary_text + "\n\nNew announcement post:")
 
-                        msg = await channel.send(embed=new_announcement_embed, file=new_announcement_attachment)
+                        msg = await channel.send(embed=new_announcement_embed, file=(await new_puzzle_file.to_file()))
                         await og_announcement.edit(
                             content=f"**EDIT: This puzzle has been updated, see the new announcement post here**: {msg.jump_url}")
                         round_metadata['start_post'] = msg.jump_url
@@ -921,6 +924,12 @@ class Tournament(commands.Cog):  # name="Help text name?"
                     # Create a new (open) submissions lock
                     del self.puzzle_submission_locks[puzzle_name]
                     self.puzzle_submission_locks[new_puzzle_name] = PuzzleSubmissionsLock()
+                elif ctx.message.attachments:
+                    # Save the new puzzle file and update the tournament metadata's puzzle name as needed
+                    old_puzzle_file.unlink()
+                    await new_puzzle_file.save(round_dir / new_puzzle_file.filename)
+                    del tournament_metadata['rounds'][puzzle_name]
+                    tournament_metadata['rounds'][new_puzzle_name] = round_metadata
             finally:
                 # Make sure we re-unlock the puzzle even if the process was rejected or was cancelled
                 # Note that this will have no effect if the lock was already restored or has changed names
@@ -934,7 +943,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
             # Update the tournament metadata
             with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
-                json.dump(tournament_metadata, f)
+                json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
 
             # TODO: tasks and locks need to change their puzzle name
             # Replace the relevant announcement task if a date changed
@@ -1016,7 +1025,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 del standings['rounds'][puzzle_name]
 
                 with open(tournament_dir / 'standings.json', 'w', encoding='utf-8') as f:
-                    json.dump(standings, f)
+                    json.dump(standings, f, ensure_ascii=False, indent=4)
 
             # Remove the round directory and metadata
             shutil.rmtree(round_dir)
