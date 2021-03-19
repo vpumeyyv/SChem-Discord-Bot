@@ -178,7 +178,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
     #     active_tournament.txt -> "slugified_tournament_name_1"
     #     slugified_tournament_name_1/
     #         tournament_metadata.json -> name, host, etc, + round dirs / metadata
-    #         participants.json        -> discord_tag: name (as it will appear in solution exports)
+    #         participants.json        -> discord_id: discord_tag, player_name (as it will appear in solution exports)
     #         standings.json           -> 'rounds': {puzzle_name: {player: score}}, 'total': {player: score}
     #         bonus1_puzzleA/
     #         round1_puzzleB/
@@ -255,17 +255,16 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
     def get_player_name(self, tournament_dir, discord_user: discord.User, missing_ok=True):
         """Given a discord user, get their tournament nickname as set by their first submission."""
-        discord_tag = str(discord_user)
         with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
             participants = json.load(f)
 
-        if discord_tag not in participants:
+        if discord_user.id not in participants:
             if missing_ok:
                 return None
             else:
                 raise Exception("You have no current tournament submissions.")
 
-        return participants[discord_tag]
+        return participants[discord_user.id][1]
 
     def get_level(self, round_dir):
         """Given a round directory, return an schem.Level object based on its .puzzle file."""
@@ -401,7 +400,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
             with open(self.ACTIVE_TOURNAMENT_FILE, 'w', encoding='utf-8') as f:
                 f.write(tournament_dir_name)
 
-            # Initialize tournament metadata, participants (discord_id: soln_author_name), and standings files
+            # Initialize tournament metadata, participants, and standings files
             tournament_metadata = {'name': name, 'host': ctx.message.author.name, 'start': start, 'end': end, 'rounds': {}}
             with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
                 json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
@@ -962,15 +961,30 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
                     participants = json.load(f)
 
-                for member in self.bot.get_guild(GUILD_ID).members:
-                    discord_tag = str(member)
-                    if discord_tag in participants and participants[discord_tag] in invalid_soln_authors:
+                # Construct a reverse dict for quicker lookups by name
+                # TODO: This won't play nice with teams, need name -> list_of_ids
+                name_to_id = {name: id for id, (_, name) in participants.values()}
+                non_discord_players = set()
+
+                for player_name in invalid_soln_authors:
+                    if player_name in name_to_id:
+                        user = await self.bot.fetch_user(name_to_id[player_name])
                         await self.bot.send_message(
-                            member,
+                            user,
                             f"{old_round_name}, {puzzle_name} has been updated and one or more of your submissions"
                             " were invalidated by the change! Please check"
                             f' `!tournament-list-submissions "{round_metadata["round_name"]}"` and update/re-submit'
                             " any missing solutions as needed.")
+                    else:
+                        non_discord_players.add(player_name)
+
+                # Warn the TO of any solutions for whom the authors couldn't be found on discord (e.g. added by the
+                # TO submit backdoor)
+                if non_discord_players:
+                    await ctx.send("Warning: The following authors could not be DM'd about their invalid submissions"
+                                   " since they have no associated discord account (you probably submitted for them):"
+                                   ", ".join(f"`{name}`" for name in non_discord_players) + "."
+                                   "\nConsider contacting these players to inform them of their invalidated solution(s).")
 
         await ctx.send(f"Updated {', '.join(updated_fields)} for {round_metadata['round_name']}, {puzzle_name}")
 
@@ -1082,31 +1096,25 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
                 # Skip participant name checks for the TO backdoor
                 if not is_tournament_host(ctx):
-                    # Discord tag used to ensure no name collision errors or exploits, and so the host knows who to message in case
-                    # of any issues
-                    discord_tag = str(ctx.message.author)  # e.g. <username>#1234. Guaranteed to be unique
-
-                    # Register this discord_tag: author_name mapping if it is not already registered
+                    # Register this discord_id: [discord_tag, author_name] mapping if it is not already registered
                     # If the solution's author_name conflicts with that of another player, request they change it
-                    # If the author_name conflicts with that already submitted by this discord_id, warn them but proceed as if
-                    # they purposely renamed themselves
                     with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
                         participants = json.load(f)
 
-                    if discord_tag in participants:
-                        if author != participants[discord_tag]:
+                    if ctx.message.author.id in participants:
+                        if author != participants[ctx.message.author.id][1]:
                             # TODO: Could allow name changes but it would be a lot of work and potentially confusing for the
                             #       other participants, probably should only do this case-by-case and manually
                             raise ValueError(f"Given author name `{author}` doesn't match your prior submissions':"
-                                             + f" `{participants[discord_tag]}`; please talk to the tournament host if you would"
-                                             + " like a name change.")
+                                             + f" `{participants[ctx.message.author.id]}`; please talk to the"
+                                             + " tournament host if you would like a name change.")
                     else:
                         # First submission
-                        if author in participants.values():
+                        if author in (name for _, name in participants.values()):
                             raise PermissionError(f"Solution author name `{author}` is already in use by another participant,"
                                                   + " please choose another (or login to the correct discord account).")
-
-                        participants[discord_tag] = author
+                        # Additionally store discord tag (<username>#1234) for TO readability
+                        participants[ctx.message.author.id] = [str(ctx.message.author), author]
 
                     with open(tournament_dir / 'participants.json', 'w', encoding='utf-8') as f:
                         json.dump(participants, f, ensure_ascii=False, indent=4)
@@ -1218,31 +1226,25 @@ class Tournament(commands.Cog):  # name="Help text name?"
         level_name, author, expected_score, soln_name = schem.Solution.parse_metadata(soln_str)
         soln_descr = schem.Solution.describe(level_name, author, expected_score, soln_name)
 
-        # Discord tag used to ensure no name collision errors or exploits, and so the host knows who to message in case
-        # of any issues
-        discord_tag = str(ctx.message.author)  # e.g. <username>#1234. Guaranteed to be unique
-
-        # Register this discord_tag: author_name mapping if it is not already registered
+        # Register this discord_id: [discord_tag, author_name] mapping if it is not already registered
         # If the solution's author_name conflicts with that of another player, request they change it
-        # If the author_name conflicts with that already submitted by this discord_id, warn them but proceed as if
-        # they purposely renamed themselves
         with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
             participants = json.load(f)
 
-        if discord_tag in participants:
-            if author != participants[discord_tag]:
+        if ctx.message.author.id in participants:
+            if author != participants[ctx.message.author.id][1]:
                 # TODO: Could allow name changes but it would be a lot of work and potentially confusing for the
                 #       other participants, probably should only do this case-by-case and manually
                 raise ValueError(f"Given author name `{author}` doesn't match your prior submissions':"
-                                 + f" `{participants[discord_tag]}`; please talk to the tournament host if you would"
-                                 + " like a name change.")
+                                 + f" `{participants[ctx.message.author.id]}`; please talk to the"
+                                 + " tournament host if you would like a name change.")
         else:
             # First submission
-            if author in participants.values():
+            if author in (name for _, name in participants.values()):
                 raise PermissionError(f"Solution author name `{author}` is already in use by another participant,"
                                       + " please choose another (or login to the correct discord account).")
-
-            participants[discord_tag] = author
+            # Additionally store discord tag (<username>#1234) for TO readability
+            participants[ctx.message.author.id] = [str(ctx.message.author), author]
 
         with open(tournament_dir / 'participants.json', 'w', encoding='utf-8') as f:
             json.dump(participants, f, ensure_ascii=False, indent=4)
