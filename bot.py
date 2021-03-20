@@ -308,7 +308,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         return start_dt.isoformat(), end_dt.isoformat()
 
     @classmethod
-    def format_tournament_datetime(cls, s):
+    def format_date(cls, s):
         """Return the given datetime string (expected to be UTC and as returned by datetime.isoformat()) in a more
         friendly format.
         """
@@ -330,7 +330,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         """List all tournament hosts."""
         await ctx.send(f"The following users have tournament-hosting permissions: {', '.join(self.hosts())}")
 
-    @commands.command(name='tournament-host-add', aliases=['add-tournament-host'])
+    @commands.command(name='tournament-host-add', aliases=['tournament-add-host', 'add-tournament-host'])
     @commands.is_owner()
     #@commands.dm_only()
     async def add_tournament_host(self, ctx, user: discord.User):
@@ -349,7 +349,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
         await ctx.send(f"{discord_tag} added to tournament hosts.")
 
-    @commands.command(name='tournament-host-remove', aliases=['remove-tournament-host'])
+    @commands.command(name='tournament-host-remove', aliases=['tournament-remove-host', 'remove-tournament-host'])
     @commands.is_owner()
     #@commands.dm_only()
     async def remove_tournament_host(self, ctx, user: discord.User):
@@ -415,77 +415,125 @@ class Tournament(commands.Cog):  # name="Help text name?"
             self.tournament_start_task = self.bot.loop.create_task(self.announce_tournament_start(tournament_metadata))
 
         reply = f"Successfully created {repr(name)}"
-        reply += f", Start: {self.format_tournament_datetime(tournament_metadata['start'])}"
-        reply += f", End: {self.format_tournament_datetime(tournament_metadata['end'])}"
+        reply += f", Start: {self.format_date(tournament_metadata['start'])}"
+        reply += f", End: {self.format_date(tournament_metadata['end'])}"
         await ctx.send(reply)
 
-    @commands.command(name='tournament-update', aliases=['tu'])
+    @commands.command(name='tournament-update', aliases=['tournament-edit'])
     @is_host
     #@commands.dm_only()
-    async def tournament_update(self, ctx, new_name, new_start, new_end):
+    async def tournament_update(self, ctx, *update_fields):
         """Update the current/pending tournament.
 
-        new_name: The tournament's official name, e.g. "2021 SpaceChem Tournament"
-        new_start: The datetime on which the bot will announce the tournament and
-                   after which puzzle rounds may start. ISO format, default UTC.
-                   E.g. the following are all equivalent: 2000-01-31, "2000-01-31 00:00",
-                        2000-01-30T19:00:00-05:00
-        new_end: The datetime on which the bot will announce the tournament results,
-                 after closing and tallying the results of any still-open puzzles.
-                 Same format as `new_start`.
-        """
-        updated_fields = []
+        If the tournament is already open, a post announcing the updated fields will
+        be made.
 
+        update_fields: Fields to update, specified like:
+                       field1=value "field2=value with spaces"
+                       Valid fields (same as tournament-create): name, start, end
+                       Double-quotes within a field's value should be avoided
+                       as they will interfere with arg-parsing.
+                       Unspecified fields will not be modified.
+        E.g.: !tournament-update "name=2000 SpaceChem Tournament" end=2000-01-31T19:00-05:00
+        """
         async with self.tournament_metadata_write_lock:
             tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
 
-            # Process dates while ignoring start being in the past, for the case where we didn't modify it
-            new_start, new_end = self.process_tournament_dates(new_start, new_end, check_start_in_future=False)
+            if 'end_post' in tournament_metadata:
+                raise Exception("Cannot edit closed tournament.")
 
-            if new_start != tournament_metadata['start']:
-                assert 'start_post' not in tournament_metadata, "Cannot update start date on already-announced tournament"
+            parser = argparse.ArgumentParser(exit_on_error=False)
+            parser.add_argument('--name')
+            parser.add_argument('--start', '--start_date')
+            parser.add_argument('--end', '--end_date')
 
-                # If we're modifying the start date, we do have to make sure it's in the future
-                if new_start < datetime.now(timezone.utc).isoformat():
-                    raise ValueError("New start date is in past")
+            # Heavy-handed SystemExit catch because even with exit_on_error, unknown args can cause an exit:
+            # https://bugs.python.org/issue41255
+            try:
+                args = parser.parse_args(f'--{s}' for s in update_fields)
+            except SystemExit:
+                raise Exception("Unrecognized arguments included, double-check `!help tournament-update`")
 
-                # Check that this doesn't violate any puzzle start dates
-                for round_metadata in tournament_metadata['rounds'].values():
-                    if new_start > round_metadata['start']:  # Safe since we convert everything to ISO and UTC
-                        raise ValueError(f"New start date is after start of {repr(round_metadata['round_name'])}")
+            updated_fields = set(k for k, v in vars(args).items() if v)
+            assert updated_fields, "Please specify field(s) to update"
 
-                tournament_metadata['start'] = new_start
-                updated_fields.append('start date')
+            # Prepare a text post summarizing the changed fields
+            # TODO: @tournament or some such
+            summary_text = "**The host has updated the current tournament!**\nChanges:"
 
-            modified_round_ends = []
-            if new_end != tournament_metadata['end']:
-                # Change the end date of any puzzles that ended at the same time as the tournament
-                # For all other puzzles, check their end dates weren't violated
-                for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
-                    # Again all below date comparisons safe since everything is ISO and UTC format
-                    if round_metadata['end'] == tournament_metadata['end']:
-                        # Check round start isn't violated before we modify round end
-                        if round_metadata['start'] >= new_end:
-                            raise ValueError(f"New end date is before start of {repr(round_metadata['round_name'])}")
+            modified_round_ends = set()
+            modified_open_round_ends = set()
 
-                        round_metadata['end'] = new_end
+            if args.start or args.end:
+                # Reformat and do basic checks on any changed date args (e.g. making sure end is after start)
+                # If the start date was not changed skip the check for it being in the future
+                start, end = self.process_tournament_dates(args.start if args.start else tournament_metadata['start'],
+                                                           args.end if args.end else tournament_metadata['end'],
+                                                           check_start_in_future=bool(args.start))
+                if args.start:
+                    args.start = start
 
-                        # Update the results announcement task if it exists
-                        if puzzle_name in self.round_results_tasks:
-                            self.round_results_tasks[puzzle_name].cancel()
-                            self.tournament_results_task = self.bot.loop.create_task(self.announce_round_results(puzzle_name, round_metadata))
+                    assert 'start_post' not in tournament_metadata, "Cannot update start date; tournament is already open!"
 
-                        modified_round_ends.append(round_metadata['round_name'])
-                    elif new_end < round_metadata['end']:
-                        raise ValueError(f"New end date is before end of {repr(round_metadata['round_name'])}")
+                    # Check that this doesn't violate any puzzle start dates
+                    for round_metadata in tournament_metadata['rounds'].values():
+                        if args.start > round_metadata['start']:  # Safe since we convert everything to ISO and UTC
+                            raise ValueError(f"New start date is after start of {repr(round_metadata['round_name'])}")
 
-                tournament_metadata['end'] = new_end
-                updated_fields.append('end date')
+                if args.end:
+                    args.end = end
+
+                    # Change the end date of any puzzles that ended at the same time as the tournament
+                    # For all other puzzles, check their end dates weren't violated
+                    for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
+                        # Again all below date comparisons safe since everything is ISO and UTC format
+                        if round_metadata['end'] == tournament_metadata['end']:
+                            # Check round start isn't violated before we modify round end
+                            if round_metadata['start'] >= args.end:
+                                raise ValueError(f"New end date is before start of `{round_metadata['round_name']}`")
+
+                            round_metadata['end'] = args.end
+
+                            modified_round_ends.add(round_metadata['round_name'])
+                            if 'start_post' in round_metadata:
+                                modified_open_round_ends.add(round_metadata['round_name'])
+
+                        elif args.end < round_metadata['end']:
+                            raise ValueError(f"New end date is before end of `{round_metadata['round_name']}`")
+
+            # Update tournament metadata and summary post
+            for k, v in vars(args).items():
+                if v:
+                    # Check that field has actually changed
+                    if v == tournament_metadata[k]:
+                        raise ValueError(f"{k} was already `{v}`, did you mean to update it?")
+
+                    if k in ('start', 'end'):
+                        summary_text += f"\n  • {k}: `{self.format_date(tournament_metadata[k])}` -> `{self.format_date(v)}`"
+                    else:
+                        summary_text += f"\n  • {k}: `{tournament_metadata[k]}` -> `{v}`"
+                    tournament_metadata[k] = v
+
+            # Mention any open puzzles that were edited in the public summary text
+            if modified_open_round_ends:
+                summary_text += f"\n    {', '.join(f'`{s}`' for s in modified_open_round_ends)}" \
+                                + " had end date modified to match new tournament end date."
+
+            # If tournament is already open, ask for confirmation before making changes
+            if 'start_post' in tournament_metadata:
+                await ctx.send("The tournament is already open so the following public announcement post will be made:"
+                               "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                await ctx.send(summary_text)
+                confirm_msg = await ctx.send("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                                             "\nAre you sure you wish to continue?"
+                                             " React with ✅ within 30 seconds to proceed, ❌ to cancel all changes.")
+                if not await self.wait_for_confirmation(ctx, confirm_msg):
+                    return
 
             # Update name last so the directory rename won't occur if other args were invalid
-            if new_name != tournament_metadata['name']:
-                new_tournament_dir_name = slugify(new_name)
-                assert new_tournament_dir_name, f"Invalid tournament name {new_name}"
+            if args.name:
+                new_tournament_dir_name = slugify(args.name)
+                assert new_tournament_dir_name, f"Invalid tournament name {args.name}"
 
                 tournament_dir.rename(self.TOURNAMENTS_DIR / new_tournament_dir_name)
                 tournament_dir = self.TOURNAMENTS_DIR / new_tournament_dir_name
@@ -493,23 +541,38 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 with open(self.ACTIVE_TOURNAMENT_FILE, 'w', encoding='utf-8') as f:
                     f.write(new_tournament_dir_name)
 
-                tournament_metadata['name'] = new_name
-                updated_fields.append('name')
-
-            if not updated_fields:
-                raise ValueError("All fields match existing tournament fields.")
-
+            # Save changes to metadata file
             with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
                 json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
 
             # If the update was successful and changed a date(s), cancel and replace the relevant BG announcement task
-            if 'start date' in updated_fields:
+            if args.start:
                 self.tournament_start_task.cancel()
                 self.tournament_start_task = self.bot.loop.create_task(self.announce_tournament_start(tournament_metadata))
-            elif 'end date' in updated_fields and 'start_post' in tournament_metadata:
+            elif args.end and self.tournament_results_task is not None:
                 self.tournament_results_task.cancel()
                 self.tournament_results_task = self.bot.loop.create_task(self.announce_tournament_results(tournament_metadata))
 
+        # If the tournament was open, announce the changes publicly and update any puzzle end dates
+        if 'start_post' in tournament_metadata:
+            # Update any rounds that had their end date changed to match the tournament end date
+            channel = self.bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
+            for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
+                if round_metadata['round_name'] in modified_open_round_ends:
+                    # Edit the announcement post
+                    msg_id = round_metadata['start_post'].strip('/').split('/')[-1]
+                    announcement_msg = await channel.fetch_message(msg_id)
+                    announcement_embed = self.round_announcement(tournament_dir, tournament_metadata, puzzle_name)[0]
+                    await announcement_msg.edit(embed=announcement_embed)
+
+                    # Update the results announcement task
+                    self.round_results_tasks[puzzle_name].cancel()
+                    self.tournament_results_task = self.bot.loop.create_task(self.announce_round_results(puzzle_name, round_metadata))
+
+            channel = self.bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
+            await channel.send(summary_text)
+
+        # Regardless of any public posts, inform the TO of all changes made (including those to future puzzles)
         reply = f"Successfully updated tournament {', '.join(updated_fields)}."
         if modified_round_ends:
             reply += f"\nEnd date of round(s) `{'`, `'.join(modified_round_ends)}` updated to match new end date."
@@ -724,6 +787,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
             args_dict = vars(args)
             updated_fields = set(k for k, v in args_dict.items() if v)
+            assert updated_fields, "Please specify field(s) to update"
 
             # Check that only changed fields were specified
             for k, v in args_dict.items():
@@ -739,11 +803,12 @@ class Tournament(commands.Cog):  # name="Help text name?"
                                              is_host=True, missing_ok=True) is not None):
                 raise ValueError(f"Puzzle/round with name ~= `{args.round_name}` already exists in the current tournament")
 
-            # Reformat and do basic checks on the date args
+            # Reformat and do basic checks on any changed date args (e.g. making sure end is after start)
             if args.start or args.end:
+                # If the start date was not changed skip the check for it being in the future
                 start, end = self.process_tournament_dates(args.start if args.start else round_metadata['start'],
                                                            args.end if args.end else round_metadata['end'],
-                                                           check_start_in_future=False)
+                                                           check_start_in_future=bool(args.start))
                 if args.start:
                     args.start = start
 
@@ -759,9 +824,12 @@ class Tournament(commands.Cog):  # name="Help text name?"
                             + "\nChanges:")
 
             # Update round metadata and summary text
-            for k, v in args_dict.items():
+            for k, v in vars(args).items():  # Re-fetch args dict since start/end might be reformatted
                 if v:
-                    summary_text += f"\n  • {k}: `{round_metadata[k]}` -> `{v}`"
+                    if k in ('start', 'end'):
+                        summary_text += f"\n  • {k}: `{self.format_date(round_metadata[k])}` -> `{self.format_date(v)}`"
+                    else:
+                        summary_text += f"\n  • {k}: `{round_metadata[k]}` -> `{v}`"
                     round_metadata[k] = v
 
             try:
@@ -1014,7 +1082,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
             if datetime.now(timezone.utc).isoformat() > round_metadata['start']:
                 timeout_seconds = 30
                 warn_msg = await ctx.send(
-                    f"Warning: This round's start date ({self.format_tournament_datetime(round_metadata['start'])}) has"
+                    f"Warning: This round's start date ({self.format_date(round_metadata['start'])}) has"
                     + " already passed and deleting it will delete any player solutions. Are you sure you wish to continue?"
                     + f"\nReact to this message with ✅ within {timeout_seconds} seconds to delete anyway, ❌ to cancel.")
 
@@ -1461,8 +1529,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
             if 'start_post' in tournament_metadata:
                 embed.description += f"[Announcement]({tournament_metadata['start_post']})"
             else:
-                embed.description += f"Start: {self.format_tournament_datetime(tournament_metadata['start'])}" \
-                                     + f" | End: {self.format_tournament_datetime(tournament_metadata['end'])}"
+                embed.description += f"Start: {self.format_date(tournament_metadata['start'])}" \
+                                     + f" | End: {self.format_date(tournament_metadata['end'])}"
 
             embed.description += "\n**Rounds**:"
             for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
@@ -1474,8 +1542,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 elif is_host:
                     # Allow the TO to see schedule info on upcoming puzzles
                     embed.description += f"\n{round_metadata['round_name']}, {puzzle_name}:" \
-                                         + f" Start: {self.format_tournament_datetime(round_metadata['start'])}" \
-                                         + f" | End: {self.format_tournament_datetime(round_metadata['end'])}"
+                                         + f" Start: {self.format_date(round_metadata['start'])}" \
+                                         + f" | End: {self.format_date(round_metadata['end'])}"
 
             # Create a standings table (in chunks under discord's char limit as needed)
             title_line = "**Standings**\n"
@@ -1497,7 +1565,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
         if is_host and 'start_post' not in round_metadata:
             # If this is the host checking an unannounced puzzle, simply preview the announcement post for them
-            await ctx.send(f"On {self.format_tournament_datetime(round_metadata['start'])} the following announcement will be sent:")
+            await ctx.send(f"On {self.format_date(round_metadata['start'])} the following announcement will be sent:")
             embed, attachment = self.round_announcement(tournament_dir, tournament_metadata, puzzle_name)
             await ctx.send(embed=embed, file=attachment)
             return
@@ -1513,7 +1581,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
         # If this is the TO, preview the results post for them (in separate msgs so the embed goes on top)
         if is_host and not 'end_post' in round_metadata:
-            await ctx.send(f"On {self.format_tournament_datetime(round_metadata['end'])} the following announcement will be sent:")
+            await ctx.send(f"On {self.format_date(round_metadata['end'])} the following announcement will be sent:")
 
             # Send each of the sub-2000 char announcement messages, adding the attachments to the last one
             msg_strings, attachments, _ = self.round_results_announcement_and_standings_change(tournament_dir, tournament_metadata, puzzle_name)
@@ -1526,7 +1594,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
     def tournament_announcement(self, tournament_metadata):
         """Return the tournament announcement text."""
         announcement = f"**Announcing the {tournament_metadata['name']}**"
-        announcement += f"\nEnd date: {self.format_tournament_datetime(tournament_metadata['end'])}"
+        announcement += f"\nEnd date: {self.format_date(tournament_metadata['end'])}"
 
         return announcement
 
@@ -1561,7 +1629,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         embed.add_field(name='Points', value=round_metadata['points'], inline=True)
 
         # Make the ISO datetime string friendlier-looking (e.g. no +00:00) or indicate puzzle is tournament-long
-        round_end = self.format_tournament_datetime(round_metadata['end'])
+        round_end = self.format_date(round_metadata['end'])
         if round_metadata['end'] == tournament_metadata['end']:
             round_end += " (Tournament Close)"
         embed.add_field(name='Deadline', value=round_end, inline=True)
