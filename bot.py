@@ -178,7 +178,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
     #     active_tournament.txt -> "slugified_tournament_name_1"
     #     slugified_tournament_name_1/
     #         tournament_metadata.json -> name, host, etc, + round dirs / metadata
-    #         participants.json        -> discord_id: discord_tag, player_name (as it will appear in solution exports)
+    #         participants.json        -> discord_tag: discord_id, nickname (as it will appear in solution exports)
     #         standings.json           -> 'rounds': {puzzle_name: {player: score}}, 'total': {player: score}
     #         bonus1_puzzleA/
     #         round1_puzzleB/
@@ -258,13 +258,14 @@ class Tournament(commands.Cog):  # name="Help text name?"
         with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
             participants = json.load(f)
 
-        if discord_user.id not in participants:
+        discord_tag = str(discord_user)
+        if discord_tag not in participants:
             if missing_ok:
                 return None
             else:
                 raise Exception("You have no current tournament submissions.")
 
-        return participants[discord_user.id][1]
+        return participants[discord_tag][1]
 
     def get_level(self, round_dir):
         """Given a round directory, return an schem.Level object based on its .puzzle file."""
@@ -1029,9 +1030,9 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
                     participants = json.load(f)
 
-                # Construct a reverse dict for quicker lookups by name
+                # Construct a name:id dict for quicker lookups by name
                 # TODO: This won't play nice with teams, need name -> list_of_ids
-                name_to_id = {name: id for id, (_, name) in participants.values()}
+                name_to_id = {name: id for id, name in participants.values()}
                 non_discord_players = set()
 
                 for player_name in invalid_soln_authors:
@@ -1145,20 +1146,21 @@ class Tournament(commands.Cog):  # name="Help text name?"
         with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
             participants = json.load(f)
 
-        if user.id in participants:
-            if nickname != participants[user.id][1]:
+        discord_tag = str(user)
+        if discord_tag in participants:
+            if nickname != participants[discord_tag][1]:
                 # TODO: Could allow name changes but it would be a lot of work and potentially confusing for the
                 #       other participants, probably should only do this case-by-case and manually
                 raise ValueError(f"Given author name `{nickname}` doesn't match your prior submissions':"
-                                 + f" `{participants[user.id]}`; please talk to the"
+                                 + f" `{participants[discord_tag][1]}`; please talk to the"
                                  + " tournament host if you would like a name change.")
         else:
             # First submission
             if nickname in (name for _, name in participants.values()):
                 raise PermissionError(f"Solution author name `{nickname}` is already in use by another participant,"
                                       + " please choose another (or login to the correct discord account).")
-            # Additionally store discord tag (<username>#1234) for TO readability
-            participants[user.id] = [str(user), nickname]
+            # Store both user tag and ID since former is TO-readable and latter is API-usable
+            participants[discord_tag] = [user.id, nickname]
 
         with open(tournament_dir / 'participants.json', 'w', encoding='utf-8') as f:
             json.dump(participants, f, ensure_ascii=False, indent=4)
