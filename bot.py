@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sys
 
 import discord
 from discord.ext import commands
@@ -838,7 +839,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 if ctx.message.attachments:
                     assert len(ctx.message.attachments) == 1, "Expected at most a single attached puzzle file!"
                     new_puzzle_file = ctx.message.attachments[0]
-                    new_level_code = (await self.read_puzzle_attachment(new_puzzle_file)).strip()
+                    new_level_code = (await self.read_puzzle_attachment(new_puzzle_file)).strip().replace("\r\n", "\n")
                     level = schem.Level(new_level_code)
 
                     # Make sure the new puzzle name doesn't conflict with any other rounds/puzzles
@@ -874,7 +875,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
                         invalid_soln_authors = set()
                         valid_soln_strs = {}
 
-                        for solns_file_name in ('solutions.txt', 'fun_solutions.txt'):
+                        for solns_file_name in ('solutions.txt', 'solutions_fun.txt'):
                             solns_file = round_dir / solns_file_name
                             if not solns_file.is_file():
                                 continue
@@ -961,11 +962,9 @@ class Tournament(commands.Cog):  # name="Help text name?"
                         await self.puzzle_submission_locks[puzzle_name].lock_and_wait_for_submitters()
 
                     if ctx.message.attachments:
-                        # Save the new puzzle file and update the tournament metadata's puzzle name as needed
+                        # Save the new puzzle file
                         old_puzzle_file.unlink()
                         await new_puzzle_file.save(round_dir / new_puzzle_file.filename)
-                        del tournament_metadata['rounds'][puzzle_name]
-                        tournament_metadata['rounds'][new_puzzle_name] = round_metadata
 
                         # Update solutions.txt and fun_solutions.txt
                         for solns_file_name, cur_soln_strs in valid_soln_strs.items():
@@ -1039,11 +1038,10 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 for player_name in invalid_soln_authors:
                     if player_name in name_to_id:
                         user = await self.bot.fetch_user(name_to_id[player_name])
-                        await self.bot.send_message(
-                            user,
+                        await user.send(
                             f"{old_round_name}, {puzzle_name} has been updated and one or more of your submissions"
                             " were invalidated by the change! Please check"
-                            f' `!tournament-list-submissions "{round_metadata["round_name"]}"` and update/re-submit'
+                            f' `!tournament-list-submissions {round_metadata["round_name"]}` and update/re-submit'
                             " any missing solutions as needed.")
                     else:
                         non_discord_players.add(player_name)
