@@ -324,7 +324,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
             return set(json.load(f)['hosts'])
 
     # Note: Command docstrings should be limited to ~80 char lines to avoid ugly wraps in any reasonably-sized window
-    @commands.command(name='tournament-hosts', aliases=['th'])
+    @commands.command(name='tournament-hosts', aliases=['th', 'tournament-host-list', 'thl'])
     @is_host
     async def hosts_cmd(self, ctx):
         """List all tournament hosts."""
@@ -1136,6 +1136,72 @@ class Tournament(commands.Cog):  # name="Help text name?"
     #         solutions are rejected and requested to be sent directly to the tournament host
     #       - limit user submissions to like 2 per minute
 
+    def add_or_check_player(self, tournament_dir: Path, user: discord.User, nickname: str):
+        """Given a discord user and nickname, register this participant or verify they match the originally-registered
+        pairing.
+        """
+        # Register this discord_id: [discord_tag, author_name] mapping if it is not already registered
+        # If the solution's author_name conflicts with that of another player, request they change it
+        with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
+            participants = json.load(f)
+
+        if user.id in participants:
+            if nickname != participants[user.id][1]:
+                # TODO: Could allow name changes but it would be a lot of work and potentially confusing for the
+                #       other participants, probably should only do this case-by-case and manually
+                raise ValueError(f"Given author name `{nickname}` doesn't match your prior submissions':"
+                                 + f" `{participants[user.id]}`; please talk to the"
+                                 + " tournament host if you would like a name change.")
+        else:
+            # First submission
+            if nickname in (name for _, name in participants.values()):
+                raise PermissionError(f"Solution author name `{nickname}` is already in use by another participant,"
+                                      + " please choose another (or login to the correct discord account).")
+            # Additionally store discord tag (<username>#1234) for TO readability
+            participants[user.id] = [str(user), nickname]
+
+        with open(tournament_dir / 'participants.json', 'w', encoding='utf-8') as f:
+            json.dump(participants, f, ensure_ascii=False, indent=4)
+
+    async def parse_solution_attachment(self, attachment: discord.Attachment, is_host=False):
+        """Given a discord Attachment expected to be a solution file, return a list of its solutions.
+        If is_host is False, assert that only one solution is included.
+        """
+        soln_bytes = await attachment.read()
+        try:
+            soln_str = soln_bytes.decode("utf-8").replace('\r\n', '\n')
+        except UnicodeDecodeError as e:
+            raise Exception("Attachment must be a plaintext file (containing a Community Edition export).") from e
+
+        soln_strs = list(schem.Solution.split_solutions(soln_str))
+        assert len(soln_strs) != 0, "Attachment does not contain SpaceChem solution string(s)"
+        assert len(soln_strs) == 1 or is_host, "Expected only one solution in the attached file."
+
+        return soln_strs
+
+    def verify_round_submission_time(self, submission_msg: discord.Message, tournament_metadata: dict, puzzle_name: str):
+        """Raise an appropriate error if the given puzzle does not exist or the given message was not sent/edited
+        during its submission time.
+        """
+        # Since otherwise future puzzle names could in theory be searched for, make sure we return the same message
+        # whether a puzzle does not exist or is not yet open for submissions
+        unknown_level_exc = ValueError(f"No active tournament level `{puzzle_name}`; ensure the first line of"
+                                       + " your solution export has the correct level name.")
+        if puzzle_name not in tournament_metadata['rounds']:
+            raise unknown_level_exc
+        round_metadata = tournament_metadata['rounds'][puzzle_name]
+
+        if submission_msg.edited_at is not None:
+            # Cover any possible late-submission exploits if we ever allow bot to respond to edits
+            msg_time = submission_msg.edit_at.replace(tzinfo=timezone.utc)
+        else:
+            msg_time = submission_msg.created_at.replace(tzinfo=timezone.utc)
+
+        if msg_time < datetime.fromisoformat(round_metadata['start']):
+            raise unknown_level_exc
+        elif msg_time > datetime.fromisoformat(round_metadata['end']):
+            raise Exception(f"Submissions for `{puzzle_name}` have closed.")
+
     # TODO: Accept blurb: https://discordpy.readthedocs.io/en/latest/ext/commands/commands.html#keyword-only-arguments
     @commands.command(name='tournament-submit', aliases=['ts'])
     #@commands.dm_only()  # TODO: Give the bot permission to delete !tournament-submit messages from public channels
@@ -1145,15 +1211,7 @@ class Tournament(commands.Cog):  # name="Help text name?"
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata()
 
         assert len(ctx.message.attachments) == 1, "Expected one attached solution file!"
-        soln_bytes = await ctx.message.attachments[0].read()
-        try:
-            soln_str = soln_bytes.decode("utf-8").replace('\r\n', '\n')
-        except UnicodeDecodeError as e:
-            raise Exception("Attachment must be a plaintext file (containing a Community Edition export).") from e
-
-        soln_strs = list(schem.Solution.split_solutions(soln_str))
-        assert len(soln_strs) != 0, "Attachment does not contain SpaceChem solution string(s)"
-        assert len(soln_strs) == 1 or is_tournament_host(ctx), "Expected only one solution in the attached file."
+        soln_strs = await self.parse_solution_attachment(ctx.message.attachments[0], is_host=is_tournament_host(ctx))
 
         reaction = '✅'
         for soln_str in soln_strs:
@@ -1164,50 +1222,13 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
                 # Skip participant name checks for the TO backdoor
                 if not is_tournament_host(ctx):
-                    # Register this discord_id: [discord_tag, author_name] mapping if it is not already registered
-                    # If the solution's author_name conflicts with that of another player, request they change it
-                    with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
-                        participants = json.load(f)
+                    self.add_or_check_player(tournament_dir, ctx.message.author, author)
 
-                    if ctx.message.author.id in participants:
-                        if author != participants[ctx.message.author.id][1]:
-                            # TODO: Could allow name changes but it would be a lot of work and potentially confusing for the
-                            #       other participants, probably should only do this case-by-case and manually
-                            raise ValueError(f"Given author name `{author}` doesn't match your prior submissions':"
-                                             + f" `{participants[ctx.message.author.id]}`; please talk to the"
-                                             + " tournament host if you would like a name change.")
-                    else:
-                        # First submission
-                        if author in (name for _, name in participants.values()):
-                            raise PermissionError(f"Solution author name `{author}` is already in use by another participant,"
-                                                  + " please choose another (or login to the correct discord account).")
-                        # Additionally store discord tag (<username>#1234) for TO readability
-                        participants[ctx.message.author.id] = [str(ctx.message.author), author]
+                # Check the round exists and the message is within its submission period
+                self.verify_round_submission_time(ctx.message, tournament_metadata, level_name)
 
-                    with open(tournament_dir / 'participants.json', 'w', encoding='utf-8') as f:
-                        json.dump(participants, f, ensure_ascii=False, indent=4)
-
-                # Since otherwise future puzzle names could in theory be searched for, make sure we return the same message
-                # whether a puzzle does not exist or is not yet open for submissions
-                unknown_level_exc = ValueError(f"No active tournament level `{level_name}`; ensure the first line of your solution"
-                                               + " has the correct level name or check the start/end dates of the given puzzle.")
-                if level_name not in tournament_metadata['rounds']:
-                    raise unknown_level_exc
                 round_metadata = tournament_metadata['rounds'][level_name]
-
                 round_dir = tournament_dir / round_metadata['dir']
-
-                # Check that the message was sent during the round's submission period
-                if ctx.message.edited_at is not None:
-                    # Cover any possible late-submission exploits if we ever allow bot to respond to edits
-                    msg_time = ctx.message.edit_at.replace(tzinfo=timezone.utc)
-                else:
-                    msg_time = ctx.message.created_at.replace(tzinfo=timezone.utc)
-
-                if msg_time < datetime.fromisoformat(round_metadata['start']):
-                    raise unknown_level_exc
-                elif msg_time > datetime.fromisoformat(round_metadata['end']):
-                    raise Exception(f"Submissions for `{level_name}` have closed.")
 
                 # TODO: Check if the tournament host set a higher max submission cycles value, otherwise default to e.g.
                 #       10,000,000 and break here if that's violated
@@ -1285,59 +1306,19 @@ class Tournament(commands.Cog):  # name="Help text name?"
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata()
 
         assert len(ctx.message.attachments) == 1, "Expected one attached solution file!"
-        soln_bytes = await ctx.message.attachments[0].read()
-        try:
-            soln_str = soln_bytes.decode("utf-8").replace('\r\n', '\n')
-        except UnicodeDecodeError as e:
-            raise Exception("Attachment must be a plaintext file (containing a Community Edition export).") from e
+        soln_str = (await self.parse_solution_attachment(ctx.message.attachments[0]))[0]
 
         level_name, author, expected_score, soln_name = schem.Solution.parse_metadata(soln_str)
         soln_descr = schem.Solution.describe(level_name, author, expected_score, soln_name)
 
-        # Register this discord_id: [discord_tag, author_name] mapping if it is not already registered
-        # If the solution's author_name conflicts with that of another player, request they change it
-        with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
-            participants = json.load(f)
+        # Register or verify this participant's nickname
+        self.add_or_check_player(tournament_dir, ctx.message.author, author)
 
-        if ctx.message.author.id in participants:
-            if author != participants[ctx.message.author.id][1]:
-                # TODO: Could allow name changes but it would be a lot of work and potentially confusing for the
-                #       other participants, probably should only do this case-by-case and manually
-                raise ValueError(f"Given author name `{author}` doesn't match your prior submissions':"
-                                 + f" `{participants[ctx.message.author.id]}`; please talk to the"
-                                 + " tournament host if you would like a name change.")
-        else:
-            # First submission
-            if author in (name for _, name in participants.values()):
-                raise PermissionError(f"Solution author name `{author}` is already in use by another participant,"
-                                      + " please choose another (or login to the correct discord account).")
-            # Additionally store discord tag (<username>#1234) for TO readability
-            participants[ctx.message.author.id] = [str(ctx.message.author), author]
+        # Check the round exists and the message is within its submission period
+        self.verify_round_submission_time(ctx.message, tournament_metadata, level_name)
 
-        with open(tournament_dir / 'participants.json', 'w', encoding='utf-8') as f:
-            json.dump(participants, f, ensure_ascii=False, indent=4)
-
-        # Since otherwise future puzzle names could in theory be searched for, make sure we return the same message
-        # whether a puzzle does not exist or is not yet open for submissions
-        unknown_level_exc = ValueError(f"No active tournament level `{level_name}`; ensure the first line of your solution"
-                                       + " has the correct level name or check the start/end dates of the given puzzle.")
-        if level_name not in tournament_metadata['rounds']:
-            raise unknown_level_exc
         round_metadata = tournament_metadata['rounds'][level_name]
-
         round_dir = tournament_dir / round_metadata['dir']
-
-        # Check that the message was sent during the round's submission period
-        if ctx.message.edited_at is not None:
-            # Cover any possible late-submission exploits if we ever allow bot to respond to edits
-            msg_time = ctx.message.edit_at.replace(tzinfo=timezone.utc)
-        else:
-            msg_time = ctx.message.created_at.replace(tzinfo=timezone.utc)
-
-        if msg_time < datetime.fromisoformat(round_metadata['start']):
-            raise unknown_level_exc
-        elif msg_time > datetime.fromisoformat(round_metadata['end']):
-            raise Exception(f"Submissions for `{level_name}` have closed.")
 
         # TODO: Check if the tournament host set a higher max submission cycles value, otherwise default to e.g.
         #       10,000,000 and break here if that's violated
@@ -1384,7 +1365,9 @@ class Tournament(commands.Cog):  # name="Help text name?"
         await ctx.message.add_reaction('✅')
         await msg.edit(content=reply)
 
-    @commands.command(name='tournament-submissions-list', aliases=['tsl', 'tournament-list-submissions', 'tls'])
+    @commands.command(name='tournament-submissions-list', aliases=['tsl',
+                                                                   'tournament-submissions',
+                                                                   'tournament-list-submissions', 'tls'])
     #@commands.dm_only()  # Prevent public channel spam and make sure TO can't accidentally leak current round results
     async def tournament_list_submissions(self, ctx, *, round_or_puzzle_name=None):
         """List your puzzle submissions.
@@ -1395,7 +1378,10 @@ class Tournament(commands.Cog):  # name="Help text name?"
                               to the specified round/puzzle. May be a past puzzle.
         """
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=False)
-        player_name = self.get_player_name(tournament_dir, ctx.message.author, missing_ok=False)
+        player_name = self.get_player_name(tournament_dir, ctx.message.author, missing_ok=True)
+        if player_name is None:
+            await ctx.send("You have no current tournament submissions.")
+            return
 
         reply = ""
 
