@@ -788,7 +788,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
             args_dict = vars(args)
             updated_fields = set(k for k, v in args_dict.items() if v)
-            assert updated_fields, "Please specify field(s) to update"
+
+            assert updated_fields or ctx.message.attachments, "Please specify field(s) to update or attach new puzzle file"
 
             # Check that only changed fields were specified
             for k, v in args_dict.items():
