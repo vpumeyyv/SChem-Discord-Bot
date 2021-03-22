@@ -1,0 +1,94 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import discord
+from discord.ext import commands
+
+from tournament_base import BaseTournament, is_tournament_host
+from utils import format_date, split_by_char_limit
+
+
+class TournamentInfo(BaseTournament):
+    """Class providing a tournament-info bot command."""
+
+    @commands.command(name='tournament-info', aliases=['ti'])
+    #@commands.dm_only()  # Prevent public channel spam and make sure TO can't accidentally leak current round results
+    async def tournament_info(self, ctx, *, round_or_puzzle_name=None):
+        """Info on the tournament or specified round/puzzle.
+
+        round_or_puzzle_name: (Case-insensitive) Return links to the matching
+                              puzzle's announcement (/ results if available) posts.
+                              If not specified, show all puzzle announcement links
+                              and current tournament standings.
+        """
+        is_host = is_tournament_host(ctx)
+        tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=is_host)
+
+        if round_or_puzzle_name is None:
+            # Set up an embed listing all the rounds and their announcement messsages
+            embed = discord.Embed(title=tournament_metadata['name'], description="")
+
+            if 'start_post' in tournament_metadata:
+                embed.description += f"[Announcement]({tournament_metadata['start_post']})"
+            else:
+                embed.description += f"Start: {format_date(tournament_metadata['start'])}" \
+                                     + f" | End: {format_date(tournament_metadata['end'])}"
+
+            embed.description += "\n**Rounds**:"
+            for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
+                if 'start_post' in round_metadata:
+                    embed.description += f"\n{round_metadata['round_name']}, {puzzle_name}:" \
+                                         + f" [Announcement]({round_metadata['start_post']})"
+                    if 'end_post' in round_metadata:
+                        embed.description += f" | [Results]({round_metadata['end_post']})"
+                elif is_host:
+                    # Allow the TO to see schedule info on upcoming puzzles
+                    embed.description += f"\n{round_metadata['round_name']}, {puzzle_name}:" \
+                                         + f" Start: {format_date(round_metadata['start'])}" \
+                                         + f" | End: {format_date(round_metadata['end'])}"
+
+            # Create a standings table (in chunks under discord's char limit as needed)
+            title_line = "**Standings**\n"
+            standings_table_chunks = split_by_char_limit(self.standings_str(tournament_dir),
+                                                         1999 - len(title_line) - 8)  # -8 for table backticks/newlines
+            standings_msgs = [f"```\n{s}\n```" for s in standings_table_chunks]
+            standings_msgs[0] = title_line + standings_msgs[0]
+
+            # Send all the messages
+            await ctx.send(embed=embed)
+            for standings_msg in standings_msgs:
+                await ctx.send(standings_msg)
+
+            return
+
+        # Convert to puzzle name
+        puzzle_name = self.get_puzzle_name(tournament_metadata, round_or_puzzle_name, is_host=is_host, missing_ok=False)
+        round_metadata = tournament_metadata['rounds'][puzzle_name]
+
+        if is_host and 'start_post' not in round_metadata:
+            # If this is the host checking an unannounced puzzle, simply preview the announcement post for them
+            await ctx.send(f"On {format_date(round_metadata['start'])} the following announcement will be sent:")
+            embed, attachment = self.round_announcement(tournament_dir, tournament_metadata, puzzle_name)
+            await ctx.send(embed=embed, file=attachment)
+            return
+
+        embed = discord.Embed(title=f"{round_metadata['round_name']}, {puzzle_name}",
+                              description=f"[Announcement]({round_metadata['start_post']})")
+
+        # Prevent non-TO users from accessing rounds that haven't ended or that the bot hasn't announced the results of yet
+        if 'end_post' in round_metadata:
+            embed.description += f" | [Results]({round_metadata['end_post']})"
+
+        await ctx.send(embed=embed)
+
+        # If this is the TO, preview the results post for them (in separate msgs so the embed goes on top)
+        if is_host and not 'end_post' in round_metadata:
+            await ctx.send(f"On {format_date(round_metadata['end'])} the following announcement will be sent:")
+
+            # Send each of the sub-2000 char announcement messages, adding the attachments to the last one
+            msg_strings, attachments, _ = self.round_results_announcement_and_standings_change(tournament_dir, tournament_metadata, puzzle_name)
+            for i, msg_string in enumerate(msg_strings):
+                if i < len(msg_strings) - 1:
+                    await ctx.send(msg_string)
+                else:
+                    await ctx.send(msg_string, files=attachments)

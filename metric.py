@@ -30,15 +30,18 @@ METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                     #       requires modifications to tournament validator to accept solutions without an expected
                     #       score if the metric contains 'outputs', and to eval the metric even if the solution crashes
 
+
 def format_metric(metric_score, decimals=1):
     """12.123 -> 12.1, 12 -> 12, 12.0 -> 12.0"""
     s = str(metric_score)
     decimal_idx = s.find('.')
     return s[:decimal_idx + decimals + 1] if decimal_idx != -1 else s
 
+
 def waldos(soln):
     """Return the number of waldos used by the solution (i.e. that have any non-Start instruction)."""
     return sum(1 for reactor in soln.reactors for waldo in reactor.waldos if waldo)
+
 
 def waldopath(soln):
     """Return the total number of reactor cells that are covered by the path of either waldo. Note that this may
@@ -98,6 +101,7 @@ def waldopath(soln):
 
     return total_waldopath
 
+
 def used_bonders(soln):
     """Return the number of bonders in the solution which have been placed adjacent to another (compatible) bonder."""
     num_used_bonders = 0
@@ -111,6 +115,7 @@ def used_bonders(soln):
 
     return num_used_bonders
 
+
 def num_arrows(soln):
     """Return the number of arrows in the solution."""
     return sum(1
@@ -118,6 +123,7 @@ def num_arrows(soln):
                for waldo in reactor.waldos
                for arrow, _ in waldo.instr_map.values()
                if arrow is not None)
+
 
 def num_instrs_of_type(soln, instr_type):
     """Return the number of non-arrow instructions of the given type in the solution."""
@@ -127,9 +133,11 @@ def num_instrs_of_type(soln, instr_type):
                for _, cmd in waldo.instr_map.values()
                if cmd is not None and cmd.type == instr_type)
 
+
 def completed_outputs(soln):
     """Given a Solution object that has run to completion or error, return the number of completed output molecules."""
     return sum(output.current_count for output in soln.outputs)
+
 
 def ast_vars(node):
     """Return a set of all variables in the given AST."""
@@ -145,6 +153,7 @@ def ast_vars(node):
         return set().union(*(ast_vars(arg) for arg in node.args))
     else:
         raise TypeError(node)
+
 
 def ast_operators(node):
     """Return a set of all operators and calls in the given AST, or return an error if any are invalid."""
@@ -169,6 +178,7 @@ def ast_operators(node):
     else:
         raise TypeError(node)
 
+
 def validate_metric(metric_str):
     """Raise an error if the given metric string is unparsable."""
     # Handle vars/fns case-insensitively and allow specifying powers as either ^ or **
@@ -184,6 +194,7 @@ def validate_metric(metric_str):
     for metric_var in ast_vars(metric_ast):
         if metric_var not in METRIC_VAR_TO_FN:
             raise ValueError(f"Unknown var `{metric_var}` in metric equation.")
+
 
 def get_metric_and_terms(soln, metric_str):
     """Score the (assumed to be already-validated) given solution using the given metric expression. Respects python's
