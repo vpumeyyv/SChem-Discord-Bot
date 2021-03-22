@@ -1013,7 +1013,6 @@ class Tournament(commands.Cog):  # name="Help text name?"
             with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
                 json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
 
-            # TODO: tasks and locks need to change their puzzle name
             # Replace the relevant announcement task if a date changed
             if 'start' in updated_fields and puzzle_name in self.round_start_tasks:
                 self.round_start_tasks[puzzle_name].cancel()
@@ -1082,8 +1081,8 @@ class Tournament(commands.Cog):  # name="Help text name?"
             if datetime.now(timezone.utc).isoformat() > round_metadata['start']:
                 timeout_seconds = 30
                 warn_msg = await ctx.send(
-                    f"Warning: This round's start date ({self.format_date(round_metadata['start'])}) has"
-                    + " already passed and deleting it will delete any player solutions. Are you sure you wish to continue?"
+                    f"Warning: This round's start date ({self.format_date(round_metadata['start'])}) has already passed"
+                    + " and deleting it will delete any player solutions. Are you sure you wish to continue?"
                     + f"\nReact to this message with ✅ within {timeout_seconds} seconds to delete anyway, ❌ to cancel.")
 
                 if not await self.wait_for_confirmation(ctx, warn_msg):
@@ -1126,10 +1125,6 @@ class Tournament(commands.Cog):  # name="Help text name?"
 
         reply = f"Successfully deleted {round_name}, `{puzzle_name}`"
         await (ctx.send(reply) if msg is None else msg.edit(content=reply))
-
-    # TODO: tournament-update-puzzle? Probably not worth the complexity since depending on what updates old solutions
-    #       may or not be invalidated. TO should just warn participants they'll need to resubmit, delete, re-add, and
-    #       let the bot re-announce the puzzle
 
     # TODO: DDOS-mitigating measures such as:
     #       - maximum expected cycle count (set to e.g. 1 million unless specified otherwise for a puzzle) above which
@@ -1231,9 +1226,6 @@ class Tournament(commands.Cog):  # name="Help text name?"
                 round_metadata = tournament_metadata['rounds'][level_name]
                 round_dir = tournament_dir / round_metadata['dir']
 
-                # TODO: Check if the tournament host set a higher max submission cycles value, otherwise default to e.g.
-                #       10,000,000 and break here if that's violated
-
                 with self.puzzle_submission_locks[level_name]:
                     level = self.get_level(round_dir)
 
@@ -1244,11 +1236,12 @@ class Tournament(commands.Cog):  # name="Help text name?"
                     solution = schem.Solution(level, soln_str)
 
                     # Call the SChem validator in a thread so the bot isn't blocked
+                    # TODO: Provide max_cycles arg based on the round
                     loop = asyncio.get_event_loop()
                     await loop.run_in_executor(thread_pool_executor, solution.validate)
 
-                    # TODO: if metric uses 'outputs' as a var, we should instead catch any run errors (or just PauseException,
-                    #       to taste) and pass the post-run solution object to eval_metric regardless
+                    # TODO: if metric uses 'outputs' as a var, we should instead catch any run errors (or just
+                    #       PauseException, to taste) and pass the post-run solution object to eval_metric regardless
 
                     # Calculate the solution's metric score
                     metric = round_metadata['metric']
