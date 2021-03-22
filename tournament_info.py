@@ -5,7 +5,7 @@ import discord
 from discord.ext import commands
 
 from tournament_base import BaseTournament, is_tournament_host
-from utils import format_date, split_by_char_limit
+from utils import format_date
 
 
 class TournamentInfo(BaseTournament):
@@ -25,7 +25,7 @@ class TournamentInfo(BaseTournament):
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=is_host)
 
         if round_or_puzzle_name is None:
-            # Set up an embed listing all the rounds and their announcement messsages
+            # Set up an embed listing all the rounds and their announcement messages
             embed = discord.Embed(title=tournament_metadata['name'], description="")
 
             if 'start_post' in tournament_metadata:
@@ -48,11 +48,8 @@ class TournamentInfo(BaseTournament):
                                          + f" | End: {format_date(round_metadata['end'])}"
 
             # Create a standings table (in chunks under discord's char limit as needed)
-            title_line = "**Standings**\n"
-            standings_table_chunks = split_by_char_limit(self.standings_str(tournament_dir),
-                                                         1999 - len(title_line) - 8)  # -8 for table backticks/newlines
-            standings_msgs = [f"```\n{s}\n```" for s in standings_table_chunks]
-            standings_msgs[0] = title_line + standings_msgs[0]
+            standings_msgs = self.table_msgs(title_line="**Standings**",
+                                             table_text=self.standings_str(tournament_dir))
 
             # Send all the messages
             await ctx.send(embed=embed)

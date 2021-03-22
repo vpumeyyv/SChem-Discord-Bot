@@ -5,7 +5,7 @@ import asyncio
 from datetime import datetime, timezone
 
 
-def split_by_char_limit(s, limit=1900):
+def split_by_char_limit(s, limit):
     """Given a string, return it split it on newlines into chunks under the given char limit.
 
     Raise an exception if a single line exceeds the char limit.

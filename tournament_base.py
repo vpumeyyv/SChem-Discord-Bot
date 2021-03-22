@@ -259,6 +259,18 @@ class BaseTournament(commands.Cog):
 
         return announcement
 
+    @staticmethod
+    def table_msgs(title_line, table_text):
+        """Given the text for an announcement table and its title, format the table with its title line and return them
+        in chunks that fit inside discord's 2000-char message limit.
+        """
+        # Split the table up so it will just fit under discord's 2000-char msg limit even with the title prepended
+        table_chunks = split_by_char_limit(table_text, 1999 - len(title_line) - 9)  # -9 for newlines/backticks
+        table_msgs = [f"```\n{s}\n```" for s in table_chunks]
+        table_msgs[0] = title_line + '\n' + table_msgs[0]
+
+        return table_msgs
+
     async def announce_tournament_start(self, tournament_metadata):
         """Wait until the tournament start date and then announce it."""
         # TODO: Try/except/print in these background announcement tasks is ugly af, find a better way
@@ -430,13 +442,10 @@ class BaseTournament(commands.Cog):
                     "Tournament results were announced while results announcement task was still scheduled"
 
                 print("Announcing tournament results")
-                title_line = f"**{tournament_metadata['name']} Results**\n"
-                standings_table_chunks = split_by_char_limit(self.standings_str(tournament_dir),
-                                                             1999 - len(title_line) - 8)  # -8 for table backticks/newlines
-                msg_strings = [f"```\n{s}\n```" for s in standings_table_chunks]
-                msg_strings[0] = title_line + msg_strings[0]
+                msg_strings = self.table_msgs(title_line=f"**{tournament_metadata['name']} Results**",
+                                              table_text=self.standings_str(tournament_dir))
 
-                # Send each of the sub-2000 char announcement messages, adding the attachments to the last one
+                # Send each of the sub-2000 char announcement messages
                 # Set the end post link to that of the first sent message
                 for i, msg_string in enumerate(msg_strings):
                     msg = await channel.send(msg_string)
@@ -504,9 +513,6 @@ class BaseTournament(commands.Cog):
 
         attachments = []
 
-        with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as sf:
-            solns_str = sf.read()
-
         level = self.get_level(round_dir)
 
         solns_file = round_dir / 'solutions.txt'
@@ -546,13 +552,9 @@ class BaseTournament(commands.Cog):
         if not solutions:
             col_headers = ('Player', 'Score', 'Metric', 'Rel. Metric', 'Points')
 
-        # Embed not used as it is not wide enough for tables
-        # Split the result table to fit under discord's 2000-character message limit
-        title_line = f"**{round_metadata['round_name']} ({puzzle_name}) Results**\n"
-        results_table_chunks = split_by_char_limit(self.ranking_str(col_headers, results, sort_idx=-3),
-                                                   1999 - len(title_line) - 8)  # -8 for table backticks/newlines
-        msg_strings = [f"```\n{s}\n```" for s in results_table_chunks]
-        msg_strings[0] = title_line + msg_strings[0]
+        # Create messages for the scoring solutions table. Embed not used as it is not wide enough for tables
+        msg_strings = self.table_msgs(title_line=f"**{round_metadata['round_name']} ({puzzle_name}) Results**",
+                                      table_text=self.ranking_str(col_headers, results, sort_idx=-3))
 
         # TODO: Add current overall tournament standings?
 
@@ -570,13 +572,8 @@ class BaseTournament(commands.Cog):
             fun_table_rows = [(soln.author, soln.expected_score, soln.name if soln.name else '')
                               for soln in fun_solutions]
 
-            title_line = "**Non-Scoring Submissions**\n"
-            # Split the table up so it will just fit under discord's 2000-char msg limit even with the title prepended
-            fun_table_chunks = split_by_char_limit(self.ranking_str(fun_col_headers, fun_table_rows, sort_idx=-3),
-                                                   1999 - len(title_line) - 8)  # -8 for table backticks/newlines
-            fun_table_msgs = [f"```\n{s}\n```" for s in fun_table_chunks]
-            fun_table_msgs[0] = title_line + fun_table_msgs[0]
-            msg_strings.extend(fun_table_msgs)
+            msg_strings.extend(self.table_msgs(title_line="**Non-Scoring Submissions**",
+                                               table_text=self.ranking_str(fun_col_headers, fun_table_rows, sort_idx=-3)))
 
             attachments.append(discord.File(str(fun_solns_file), filename=fun_solns_file.name))
 
