@@ -220,7 +220,7 @@ class TournamentSubmit(BaseTournament):
 
             # Call the SChem validator in a thread so the bot isn't blocked
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(self.thread_pool_executor, solution.validate)
+            await loop.run_in_executor(None, solution.validate)
 
             reply = f"Added non-scoring submission {soln_descr}"
 

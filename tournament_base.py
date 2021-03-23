@@ -548,6 +548,8 @@ class BaseTournament(commands.Cog):
             results.append([solution.author, str(solution.expected_score)] + list(term_values.values())
                            + [metric_score, relative_metric, points])
 
+        # TODO: Add way to specify placement points
+
         # TODO: Shouldn't need a solution to parse the header row; extract these from the metric
         if not solutions:
             col_headers = ('Player', 'Score', 'Metric', 'Rel. Metric', 'Points')
