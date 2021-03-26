@@ -12,7 +12,7 @@ from discord.ext import commands
 import schem
 from slugify import slugify
 
-from metric import validate_metric
+from metric import validate_metric, validate_metametric
 from tournament_base import PuzzleSubmissionsLock, BaseTournament, ANNOUNCEMENTS_CHANNEL_ID, is_tournament_host
 from utils import process_start_end_dates, format_date
 
@@ -78,11 +78,10 @@ class TournamentAdmin(BaseTournament):
 
         await ctx.send(f"{discord_tag} removed from tournament hosts.")
 
-
     @commands.command(name='tournament-create', aliases=['tc'])
     @is_host
     #@commands.dm_only()
-    async def tournament_create(self, ctx, name, start, end):
+    async def tournament_create(self, ctx, name, start, end, metametric='best_metric / your_metric'):
         """Create a tournament.
 
         There may only be one tournament pending/active at a time.
@@ -95,10 +94,21 @@ class TournamentAdmin(BaseTournament):
         end: The datetime on which the bot will announce the tournament results,
              after closing and tallying the results of any still-open puzzles.
              Same format as `start`.
+        metametric: The equation determining how much of a puzzle's points each
+                    player will receive (highest metametric receives full puzzle points).
+                    Valid terms:
+                        your_metric, best_metric, your_rank_idx, num_solvers
+                        where your_rank_idx is the rank, 0-indexed (with ties possible,
+                        e.g. 0, 1, 1, 3, 4, ...).
+                    The metametric will be auto-normalized to give each player
+                    puzzle_points * (your_metametric / best_metametric) points.
+                    E.g. "4*(best_metric / your_metric) + (your_rank_idx / num_submitters)"
+                    would split the weight of metric vs placement 80-20.
         """
         tournament_dir_name = slugify(name)  # Convert to a valid directory name
         assert tournament_dir_name, f"Invalid tournament name {name}"
 
+        validate_metametric(metametric)
         start, end = process_start_end_dates(start, end)
 
         self.TOURNAMENTS_DIR.mkdir(exist_ok=True)
@@ -114,7 +124,9 @@ class TournamentAdmin(BaseTournament):
                 f.write(tournament_dir_name)
 
             # Initialize tournament metadata, participants, and standings files
-            tournament_metadata = {'name': name, 'host': ctx.message.author.name, 'start': start, 'end': end, 'rounds': {}}
+            tournament_metadata = {'name': name, 'host': ctx.message.author.name,
+                                   'metametric': metametric,
+                                   'start': start, 'end': end, 'rounds': {}}
             with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
                 json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
 
@@ -122,15 +134,12 @@ class TournamentAdmin(BaseTournament):
                 json.dump({}, f, ensure_ascii=False, indent=4)
 
             with open(tournament_dir / 'standings.json', 'w', encoding='utf-8') as f:
-                json.dump({'rounds':{}, 'total': {}}, f, ensure_ascii=False, indent=4)
+                json.dump({'rounds': {}, 'total': {}}, f, ensure_ascii=False, indent=4)
 
             # Schedule the tournament announcement
             self.tournament_start_task = self.bot.loop.create_task(self.announce_tournament_start(tournament_metadata))
 
-        reply = f"Successfully created {repr(name)}"
-        reply += f", Start: {format_date(tournament_metadata['start'])}"
-        reply += f", End: {format_date(tournament_metadata['end'])}"
-        await ctx.send(reply)
+        await ctx.send(f"Successfully created {repr(name)}")
 
     @commands.command(name='tournament-update', aliases=['tournament-edit'])
     @is_host
@@ -157,6 +166,7 @@ class TournamentAdmin(BaseTournament):
 
             parser = argparse.ArgumentParser(exit_on_error=False)
             parser.add_argument('--name')
+            parser.add_argument('--metametric')
             parser.add_argument('--start', '--start_date')
             parser.add_argument('--end', '--end_date')
 
@@ -176,6 +186,9 @@ class TournamentAdmin(BaseTournament):
 
             modified_round_ends = set()
             modified_open_round_ends = set()
+
+            if args.metametric:
+                validate_metametric(args.metametric)
 
             if args.start or args.end:
                 # Reformat and do basic checks on any changed date args (e.g. making sure end is after start)

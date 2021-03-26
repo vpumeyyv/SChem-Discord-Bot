@@ -12,7 +12,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 import schem
 
-from metric import format_metric, get_metric_and_terms
+from metric import format_metric, get_metric_and_terms, eval_metametric, get_metametric_term_values
 from utils import split_by_char_limit, format_date, wait_until
 
 load_dotenv()
@@ -212,31 +212,31 @@ class BaseTournament(commands.Cog):
 
         return schem.Level(level_code)
 
-    @classmethod
-    def ranking_str(cls, headers, rows, sort_idx=-1, desc=False, max_col_width=12):
-        """Given an iterable of column headers and list of rows containing strings or numeric types, return a
-        pretty-print table with appropriate column widths.
-        If sort_idx isn't None, additionally add a ranking based on the given column idx to sort and desc (sort direction).
-        E.g. Rank results for a puzzle or standings for the tournament.
+    @staticmethod
+    def sorted_and_ranked(rows, sort_idx=-1, desc=False):
+        """Given an iterable of rows containing strings or numeric types, return a list of them sorted on the given
+        numeric column and with a rank prepended to each row.
         """
-        # Sort and rank the rows
-        if sort_idx is not None:
-            headers = ['#'] + list(headers)
-            last_score = None
-            ranked_rows = []
-            for i, row in enumerate(sorted(rows, key=lambda r: r[sort_idx], reverse=desc)):
-                # Only increment rank if we didn't tie the previous score
-                if row[sort_idx] != last_score:
-                    rank = str(i + 1)  # We can go straight to string
-                    last_score = row[sort_idx]
+        last_score = None
+        ranked_rows = []
+        for i, row in enumerate(sorted(rows, key=lambda r: r[sort_idx], reverse=desc)):
+            # Only increment rank if we didn't tie the previous value
+            if row[sort_idx] != last_score:
+                rank = i + 1
+                last_score = row[sort_idx]
 
-                ranked_rows.append([rank] + list(row))
-        else:
-            ranked_rows = rows
+            ranked_rows.append([rank] + list(row))
 
+        return ranked_rows
+
+    @staticmethod
+    def table_str(headers, rows, max_col_width=12):
+        """Given an iterable of column headers and list of rows containing strings or numeric types, return a
+        pretty-print string table with appropriate column widths.
+        """
         # Prepend the header row and convert all given values to formatted strings
         formatted_rows = [headers] + [tuple(x if isinstance(x, str) else format_metric(x, decimals=3) for x in row)
-                                      for row in ranked_rows]
+                                      for row in rows]
 
         # Get the minimum width of each column
         min_widths = [min(max_col_width, max(map(len, col))) for col in zip(*formatted_rows)]  # Sorry future reader
@@ -249,12 +249,15 @@ class BaseTournament(commands.Cog):
         with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:
             standings = json.load(f)
 
-        return cls.ranking_str(('Name', 'Score'), standings['total'].items(), desc=True)
+        ranked_standings = cls.sorted_and_ranked(standings['total'].items(), desc=True)
+
+        return cls.table_str(('Name', 'Score'), ranked_standings)
 
     @staticmethod
     def tournament_announcement(tournament_metadata):
         """Return the tournament announcement text."""
         announcement = f"**Announcing the {tournament_metadata['name']}**"
+        announcement += f"\nMetametric: `{tournament_metadata['metametric']}`"
         announcement += f"\nEnd date: {format_date(tournament_metadata['end'])}"
 
         return announcement
@@ -526,37 +529,62 @@ class BaseTournament(commands.Cog):
         metric_scores_and_terms = [get_metric_and_terms(solution, round_metadata['metric']) for solution in solutions]
         min_metric_score = min(x[0] for x in metric_scores_and_terms) if metric_scores_and_terms else None
 
-        # Sort by metric and add to the results string and player scores
-        standings_scores = {}  # player_name: metric_score
+        # Sort and rank the solutions by metric, and convert them to table rows.
+        # Also calculate their metametric score here so we can normalize and calculate points after
         col_headers = []
         results = []
-        for solution, (metric_score, term_values) in zip(solutions, metric_scores_and_terms):
-            assert solution.author not in standings_scores, "solutions.txt unexpectedly contains duplicate player"
-
+        metametrics = []
+        for rank, solution, metric_score, term_values \
+                in self.sorted_and_ranked([[s, m, tv] for s, (m, tv) in zip(solutions, metric_scores_and_terms)],
+                                          sort_idx=1):
             # We'll add a standard-format score column directly and only add extra columns for non-standard metric terms
             for term_key in ('cycles', 'reactors', 'symbols'):
                 if term_key in term_values:
                     del term_values[term_key]
 
             if not col_headers:
-                col_headers = ['Name', 'Score'] + list(term_values.keys()) + ['Metric', 'Rel. Metric', 'Points']
+                col_headers = ['#', 'Name', 'Score'] + list(term_values.keys()) + ['Metric']
 
-            relative_metric = min_metric_score / metric_score
-            points = round_metadata['points'] * relative_metric
+            row = [rank, solution.author, str(solution.expected_score)] + list(term_values.values()) + [metric_score]
 
-            standings_scores[solution.author] = points
-            results.append([solution.author, str(solution.expected_score)] + list(term_values.values())
-                           + [metric_score, relative_metric, points])
+            # Calculate metametric
+            metametric_vars = {'your_metric': metric_score, 'best_metric': min_metric_score,
+                               'your_rank_idx': rank - 1, 'num_solvers': len(solutions)}
+            metametric = eval_metametric(tournament_metadata['metametric'], metametric_vars)
+            metametrics.append(metametric)
 
-        # TODO: Add way to specify placement points
+            # Add columns for the relative metric and placement bonus if present in the metametric
+            for term_name, term_val in zip(('Rel. Metric', 'Rank Bonus'),
+                                           get_metametric_term_values(tournament_metadata['metametric'],
+                                                                      metametric_vars)):
+                if term_val is not None:
+                    row.append(term_val)
+
+                    # Add to header if not yet done
+                    if len(col_headers) < len(row):
+                        col_headers.append(term_name)
+
+            results.append(row)
+
+        # Normalize the metametric scores and award points
+        col_headers.append('Points')
+        max_metametric = metametrics[0]  # Since we already sorted
+        standings_scores = {}  # player_name: points_earned
+        for i, metametric in enumerate(metametrics):
+            author = results[i][1]
+            assert author not in standings_scores, "solutions.txt unexpectedly contains duplicate player"
+
+            points = round_metadata['points'] * (metametric / max_metametric)
+            results[i].append(points)
+            standings_scores[author] = points
 
         # TODO: Shouldn't need a solution to parse the header row; extract these from the metric
         if not solutions:
-            col_headers = ('Player', 'Score', 'Metric', 'Rel. Metric', 'Points')
+            col_headers = ('#', 'Player', 'Score', 'Metric', 'Rel. Metric', 'Points')
 
         # Create messages for the scoring solutions table. Embed not used as it is not wide enough for tables
         msg_strings = self.table_msgs(title_line=f"**{round_metadata['round_name']} ({puzzle_name}) Results**",
-                                      table_text=self.ranking_str(col_headers, results, sort_idx=-3))
+                                      table_text=self.table_str(col_headers, results))
 
         # TODO: Add current overall tournament standings?
 
@@ -575,7 +603,7 @@ class BaseTournament(commands.Cog):
                               for soln in fun_solutions]
 
             msg_strings.extend(self.table_msgs(title_line="**Non-Scoring Submissions**",
-                                               table_text=self.ranking_str(fun_col_headers, fun_table_rows, sort_idx=-3)))
+                                               table_text=self.table_str(fun_col_headers, fun_table_rows)))
 
             attachments.append(discord.File(str(fun_solns_file), filename=fun_solns_file.name))
 

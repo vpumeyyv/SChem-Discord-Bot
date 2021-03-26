@@ -30,12 +30,214 @@ METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                     #       requires modifications to tournament validator to accept solutions without an expected
                     #       score if the metric contains 'outputs', and to eval the metric even if the solution crashes
 
+METAMETRIC_VARS = {'your_metric', 'best_metric', 'your_rank_idx', 'num_solvers'}
+
 
 def format_metric(metric_score, decimals=1):
     """12.123 -> 12.1, 12 -> 12, 12.0 -> 12.0"""
     s = str(metric_score)
     decimal_idx = s.find('.')
     return s[:decimal_idx + decimals + 1] if decimal_idx != -1 else s
+
+
+def ast_vars(node):
+    """Return a set of all variables in the given AST."""
+    if isinstance(node, ast.Name):
+        return {node.id}
+    elif isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return set()
+    elif isinstance(node, ast.BinOp):
+        return ast_vars(node.left) | ast_vars(node.right)
+    elif isinstance(node, ast.UnaryOp):
+        return ast_vars(node.operand)
+    elif isinstance(node, ast.Call):
+        return set().union(*(ast_vars(arg) for arg in node.args))
+    else:
+        raise TypeError(node)
+
+
+def ast_operators(node):
+    """Return a set of all operators and calls in the given AST, or return an error if any are invalid."""
+    if isinstance(node, (ast.Name, ast.Constant)):
+        return set()
+    elif isinstance(node, ast.BinOp):
+        return {type(node.op)} | ast_operators(node.left) | ast_operators(node.right)
+    elif isinstance(node, ast.UnaryOp):
+        return {type(node.op)} | ast_operators(node.operand)
+    elif isinstance(node, ast.Call):
+        if node.func.id not in METRIC_OPS:
+            raise ValueError(f"Unknown fn `{node.func.id}` in metric equation.")
+
+        # Make sure the number of args matches the fn signature
+        fn_argspec = inspect.getfullargspec(METRIC_OPS[node.func.id])
+        if (not node.args or
+                (fn_argspec.varargs is None and fn_argspec.varkw is None
+                 and len(node.args) != len(fn_argspec.args))):
+            raise ValueError(f"Unexpected number of args to {node.func.id}")
+
+        return {node.func.id}.union(*(ast_operators(arg) for arg in node.args))
+    else:
+        raise TypeError(node)
+
+
+def validate_metric(metric_str):
+    """Raise an error if the given metric string is unparsable."""
+    # Handle vars/fns case-insensitively and allow specifying powers as either ^ or **
+    metric_str = metric_str.lower().replace('^', '**')
+
+    # Parse the string as AST
+    try:
+        metric_ast = ast.parse(metric_str, mode='eval').body
+    except SyntaxError as e:
+        raise ValueError(f"In metric: {e}") from e  # Raise a more descriptive error
+
+    for oper in ast_operators(metric_ast):
+        if oper not in METRIC_OPS:
+            raise ValueError(f"Unknown operator `{oper}` in metric equation.")
+
+    for v in ast_vars(metric_ast):
+        if v not in METRIC_VAR_TO_FN:
+            raise ValueError(f"Unknown var `{v}` in metric equation.")
+
+
+def validate_metametric(metametric_str):
+    """Raise an error if the given metametric string is unparsable."""
+    # Handle vars/fns case-insensitively and allow specifying powers as either ^ or **
+    metametric_str = metametric_str.lower().replace('^', '**')
+
+    # Parse the string as AST
+    try:
+        metametric_ast = ast.parse(metametric_str, mode='eval').body
+    except SyntaxError as e:
+        raise ValueError(f"In metametric: {e}")  # Raise a more descriptive error
+
+    for x in ast_operators(metametric_ast):
+        if x not in METRIC_OPS:
+            raise ValueError(f"Unknown operator `{x}` in metric equation.")
+
+    for v in ast_vars(metametric_ast):
+        if v not in METAMETRIC_VARS:
+            raise ValueError(f"Unknown var `{v}` in metric equation.")
+
+
+def eval_ast(node, vars_dict):
+    """Helper for evaluating a puzzle metric (safer than built-in eval)"""
+    if isinstance(node, ast.Name):
+        if node.id not in vars_dict:
+            raise Exception(f"Unknown metric var `{node.id}`")
+        return vars_dict[node.id]
+    elif isinstance(node, ast.Constant):
+        return node.value
+    elif isinstance(node, ast.BinOp):
+        return METRIC_OPS[type(node.op)](eval_ast(node.left, vars_dict), eval_ast(node.right, vars_dict))
+    elif isinstance(node, ast.UnaryOp):
+        return METRIC_OPS[type(node.op)](eval_ast(node.operand, vars_dict))
+    elif isinstance(node, ast.Call):
+        return METRIC_OPS[node.func.id](*(eval_ast(arg, vars_dict) for arg in node.args))
+    else:
+        raise TypeError(node)
+
+
+def get_metric_and_terms(soln, metric_str):
+    """Score the (assumed to be already-validated) given solution using the given metric expression. Return the score
+    along with a dict of the value for each term in the metric.
+    Respects python's usual order of operations (i.e. BEDMAS).
+    Valid ops: +, -, *, /, ** or ^
+    Valid terms: any real number, or any of:
+        cycles, reactors, symbols: Per usual.
+        waldos: Number of non-empty waldos in the solution.
+        waldopath: Number of reactor cells crossed by a waldopath
+    """
+    # Handle vars/fns case-insensitively and allow specifying powers as either ^ or **
+    metric_str = metric_str.lower().replace('^', '**')
+
+    # Parse the metric into an AST
+    ast_tree = ast.parse(metric_str, mode='eval').body
+
+    # Calculate all variables the metric needs. Sorted in same order as they appear in METRIC_VAR_TO_FN
+    # (this is the order they'll appear as column in results announcements)
+    used_vars = ast_vars(ast_tree)
+    vars_dict = {var: fn(soln) for var, fn in METRIC_VAR_TO_FN.items() if var in used_vars}
+
+    return eval_ast(ast_tree, vars_dict), vars_dict
+
+
+def eval_metric(soln, metric_str):
+    """Score the (assumed to be already-validated) given solution using the given metric expression. Return the score.
+    Respects python's usual order of operations (i.e. BEDMAS).
+    Valid ops: +, -, *, /, ** or ^
+    Valid terms: any real number, or any of:
+        cycles, reactors, symbols: Per usual.
+        waldos: Number of non-empty waldos in the solution.
+        waldopath: Number of reactor cells crossed by a waldopath
+    """
+    return get_metric_and_terms(soln, metric_str)[0]
+
+
+def eval_metametric(metametric_str, metametric_vars):
+    """Given a metametric equation and a dict of metric/placement vars for a submission, return its metametric score.
+    Respects python's usual order of operations (i.e. BEDMAS).
+    Valid ops: +, -, *, /, ** or ^
+    Required terms in metametric_vars: your_metric, best_metric, your_rank_idx (0-indexed), num_solvers
+    """
+    # Handle vars/fns case-insensitively and allow specifying powers as either ^ or **
+    metametric_str = metametric_str.lower().replace('^', '**')
+
+    ast_tree = ast.parse(metametric_str, mode='eval').body
+
+    return eval_ast(ast_tree, metametric_vars)
+
+
+def get_metametric_term_values(metametric_str, metametric_vars):
+    """Given a metametric equation and a dict of metric/rank vars for a submission, separate and evaluate its
+    relative metric and rank bonus terms, stripped of any constant factors. Return their evaluated values or None
+    if the metametric does not include that term.
+    E.g. `(4 * rel_metric + rank) / 5` => rel_metric, rank
+    """
+    # Handle vars/fns case-insensitively and allow specifying powers as either ^ or **
+    metametric_str = metametric_str.lower().replace('^', '**')
+
+    ast_tree = ast.parse(metametric_str, mode='eval').body
+    rel_metric_ast = ast_tree if 'your_metric' in metametric_str else None
+    rank_ast = ast_tree if 'your_rank_idx' in metametric_str else None
+
+    while rel_metric_ast is rank_ast is not None:
+        # Strip all constant terms until we've separated metric from placement
+        non_const_terms = [node for node in ast.iter_child_nodes(ast_tree) if not isinstance(node, ast.Constant)]
+        assert non_const_terms, f"Internal error while separating terms of {metametric_str}: no variable terms"
+
+        if len(non_const_terms) == 1:
+            rel_metric_ast = rank_ast = non_const_terms[0]
+            continue
+
+        for node in non_const_terms:
+            term_str = ast.unparse(node)
+            rel_metric_ast = node if 'your_metric' in term_str else rel_metric_ast
+            rank_ast = node if 'your_rank_idx' in term_str else rank_ast
+
+    # Once we've separated rel_metric and rank_bonus (or found one to be missing), do a final strip of any constant
+    # factors on each (but leave other ops alone so e.g. (1 - rel_rank) or max(0, 10 - rel_rank) go untouched)
+    # TODO: Refactor to merge these
+    while isinstance(rel_metric_ast, ast.BinOp) and isinstance(rel_metric_ast.op, (ast.Mult, ast.Div)):
+        if isinstance(rel_metric_ast.right, ast.Constant):
+            rel_metric_ast = rel_metric_ast.left
+        elif isinstance(rel_metric_ast.left, ast.Constant):
+            rel_metric_ast = rel_metric_ast.right
+        else:
+            break
+
+    while isinstance(rank_ast, ast.BinOp) and isinstance(rank_ast.op, (ast.Mult, ast.Div)):
+        if isinstance(rank_ast.right, ast.Constant):
+            rank_ast = rank_ast.left
+        elif isinstance(rank_ast.left, ast.Constant):
+            rank_ast = rank_ast.right
+        else:
+            break
+
+    rel_metric = eval_ast(rel_metric_ast, metametric_vars) if rel_metric_ast is not None else None
+    rank_bonus = eval_ast(rank_ast, metametric_vars) if rank_ast is not None else None
+
+    return rel_metric, rank_bonus
 
 
 def waldos(soln):
@@ -52,7 +254,7 @@ def waldopath(soln):
         return 0 <= posn.col < Reactor.NUM_COLS and 0 <= posn.row < Reactor.NUM_ROWS
 
     total_waldopath = 0
-    branching_instr_types = set((InstructionType.SENSE, InstructionType.FLIP_FLOP))
+    branching_instr_types = {InstructionType.SENSE, InstructionType.FLIP_FLOP}
     for reactor in soln.reactors:
         covered_posns = set()
         for waldo in reactor.waldos:
@@ -137,112 +339,3 @@ def num_instrs_of_type(soln, instr_type):
 def completed_outputs(soln):
     """Given a Solution object that has run to completion or error, return the number of completed output molecules."""
     return sum(output.current_count for output in soln.outputs)
-
-
-def ast_vars(node):
-    """Return a set of all variables in the given AST."""
-    if isinstance(node, ast.Name):
-        return set((node.id,))
-    elif isinstance(node, ast.Num):
-        return set()
-    elif isinstance(node, ast.BinOp):
-        return ast_vars(node.left) | ast_vars(node.right)
-    elif isinstance(node, ast.UnaryOp):
-        return ast_vars(node.operand)
-    elif isinstance(node, ast.Call):
-        return set().union(*(ast_vars(arg) for arg in node.args))
-    else:
-        raise TypeError(node)
-
-
-def ast_operators(node):
-    """Return a set of all operators and calls in the given AST, or return an error if any are invalid."""
-    if isinstance(node, (ast.Name, ast.Num)):
-        return set()
-    elif isinstance(node, ast.BinOp):
-        return set((type(node.op),)) | ast_operators(node.left) | ast_operators(node.right)
-    elif isinstance(node, ast.UnaryOp):
-        return set((type(node.op),)) | ast_operators(node.operand)
-    elif isinstance(node, ast.Call):
-        if node.func.id not in METRIC_OPS:
-            raise ValueError(f"Unknown fn `{node.func.id}` in metric equation.")
-
-        # Make sure the number of args matches the fn signature
-        fn_argspec = inspect.getfullargspec(METRIC_OPS[node.func.id])
-        if (not node.args or
-                (fn_argspec.varargs is None and fn_argspec.varkw is None
-                 and len(node.args) != len(fn_argspec.args))):
-            raise ValueError(f"Unexpected number of args to {node.func.id}")
-
-        return set((node.func.id,)).union(*(ast_operators(arg) for arg in node.args))
-    else:
-        raise TypeError(node)
-
-
-def validate_metric(metric_str):
-    """Raise an error if the given metric string is unparsable."""
-    # Handle vars/fns case-insensitively and allow specifying powers as either ^ or **
-    metric_str = metric_str.lower().replace('^', '**')
-
-    # Parse the string as AST
-    metric_ast = ast.parse(metric_str, mode='eval').body
-
-    for metric_op in ast_operators(metric_ast):
-        if metric_op not in METRIC_OPS:
-            raise ValueError(f"Unknown operator `{metric_op}` in metric equation.")
-
-    for metric_var in ast_vars(metric_ast):
-        if metric_var not in METRIC_VAR_TO_FN:
-            raise ValueError(f"Unknown var `{metric_var}` in metric equation.")
-
-
-def get_metric_and_terms(soln, metric_str):
-    """Score the (assumed to be already-validated) given solution using the given metric expression. Respects python's
-    usual order of operations (i.e. BEDMAS).
-    Return the score along with a dict of the value for each term in the metric.
-    Valid ops: +, -, *, /, ** or ^
-    Valid terms: any real number, or any of:
-        cycles, reactors, symbols: Per usual.
-        waldos: Number of non-empty waldos in the solution.
-        waldopath: Number of reactor cells crossed by a waldopath
-    """
-    # Handle vars/fns case-insensitively and allow specifying powers as either ^ or **
-    metric_str = metric_str.lower().replace('^', '**')
-
-    # Parse the metric into an AST
-    ast_tree = ast.parse(metric_str, mode='eval').body
-
-    # Calculate all variables the metric needs. Sorted in same order as they appear in METRIC_VAR_TO_FN
-    # (this is the order they'll appear as column in results announcements)
-    used_vars = ast_vars(ast_tree)
-    vars_dict = {var: fn(soln) for var, fn in METRIC_VAR_TO_FN.items() if var in used_vars}
-
-    return eval_ast(ast_tree, vars_dict), vars_dict
-
-def eval_metric(soln, metric_str):
-    """Score the (assumed to be already-validated) given solution using the given metric expression. Respects python's
-    usual order of operations (i.e. BEDMAS). Return the score.
-    Valid ops: +, -, *, /, ** or ^
-    Valid terms: any real number, or any of:
-        cycles, reactors, symbols: Per usual.
-        waldos: Number of non-empty waldos in the solution.
-        waldopath: Number of reactor cells crossed by a waldopath
-    """
-    return get_metric_and_terms(soln, metric_str)[0]
-
-def eval_ast(node, vars_dict):
-    """Helper for evaluating a puzzle metric (safer than built-in eval)"""
-    if isinstance(node, ast.Name):
-        if node.id not in vars_dict:
-            raise Exception(f"Unknown metric var `{node.id}`")
-        return vars_dict[node.id]
-    elif isinstance(node, ast.Num):
-        return node.n
-    elif isinstance(node, ast.BinOp):
-        return METRIC_OPS[type(node.op)](eval_ast(node.left, vars_dict), eval_ast(node.right, vars_dict))
-    elif isinstance(node, ast.UnaryOp):
-        return METRIC_OPS[type(node.op)](eval_ast(node.operand, vars_dict))
-    elif isinstance(node, ast.Call):
-        return METRIC_OPS[node.func.id](*(eval_ast(arg, vars_dict) for arg in node.args))
-    else:
-        raise TypeError(node)
