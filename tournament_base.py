@@ -12,7 +12,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 import schem
 
-from metric import format_metric, get_metric_and_terms, eval_metametric, get_metametric_term_values
+from metric import get_metric_and_terms, eval_metametric, get_metametric_term_values
 from utils import split_by_char_limit, format_date, wait_until
 
 load_dotenv()
@@ -235,7 +235,7 @@ class BaseTournament(commands.Cog):
         pretty-print string table with appropriate column widths.
         """
         # Prepend the header row and convert all given values to formatted strings
-        formatted_rows = [headers] + [tuple(x if isinstance(x, str) else format_metric(x, decimals=3) for x in row)
+        formatted_rows = [headers] + [tuple(x if isinstance(x, str) else str(round(x, 3)) for x in row)
                                       for row in rows]
 
         # Get the minimum width of each column

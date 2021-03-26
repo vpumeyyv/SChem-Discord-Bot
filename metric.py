@@ -33,13 +33,6 @@ METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
 METAMETRIC_VARS = {'your_metric', 'best_metric', 'your_rank_idx', 'num_solvers'}
 
 
-def format_metric(metric_score, decimals=1):
-    """12.123 -> 12.1, 12 -> 12, 12.0 -> 12.0"""
-    s = str(metric_score)
-    decimal_idx = s.find('.')
-    return s[:decimal_idx + decimals + 1] if decimal_idx != -1 else s
-
-
 def ast_vars(node):
     """Return a set of all variables in the given AST."""
     if isinstance(node, ast.Name):

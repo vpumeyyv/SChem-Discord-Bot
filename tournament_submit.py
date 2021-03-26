@@ -10,7 +10,7 @@ import discord
 from discord.ext import commands
 import schem
 
-from metric import eval_metric, format_metric
+from metric import eval_metric
 from tournament_base import BaseTournament, is_tournament_host
 
 
@@ -139,7 +139,7 @@ class TournamentSubmit(BaseTournament):
                     metric = round_metadata['metric']
                     soln_metric_score = eval_metric(solution, metric)
 
-                    reply = f"Successfully validated {soln_descr}, metric score: {format_metric(soln_metric_score, decimals=3)}"
+                    reply = f"Successfully validated {soln_descr}, metric score: {round(soln_metric_score, 3)}"
 
                     # Update solutions.txt
                     with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as f:
@@ -157,7 +157,7 @@ class TournamentSubmit(BaseTournament):
                             old_metric_score = eval_metric(schem.Solution(level, cur_soln_str), metric)
                             if soln_metric_score > old_metric_score:
                                 reply += "\nWarning: This solution regresses your last submission's metric score, previously: " \
-                                         + format_metric(old_metric_score, decimals=3)
+                                         + str(round(old_metric_score, 3))
                                 if reaction == '✅':
                                     reaction = '⚠'
                         else:
