@@ -230,7 +230,7 @@ class BaseTournament(commands.Cog):
         return ranked_rows
 
     @staticmethod
-    def table_str(headers, rows, max_col_width=12):
+    def table_str(headers, rows, max_col_width=15):
         """Given an iterable of column headers and list of rows containing strings or numeric types, return a
         pretty-print string table with appropriate column widths.
         """
