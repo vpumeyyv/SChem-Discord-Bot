@@ -235,11 +235,17 @@ class BaseTournament(commands.Cog):
         pretty-print string table with appropriate column widths.
         """
         # Prepend the header row and convert all given values to formatted strings
-        formatted_rows = [headers] + [tuple(x if isinstance(x, str) else str(round(x, 3)) for x in row)
+        formatted_rows = [headers] + [[x if isinstance(x, str) else str(round(x, 3)) for x in row]
                                       for row in rows]
 
+        # truncate values over max col width
+        for row in formatted_rows:
+            for i in range(len(row)):
+                if len(row[i]) > max_col_width:
+                    row[i] = row[i][:max_col_width - 1] + '…'  # The ellipses unicode char
+
         # Get the minimum width of each column
-        min_widths = [min(max_col_width, max(map(len, col))) for col in zip(*formatted_rows)]  # Sorry future reader
+        min_widths = [max(map(len, col)) for col in zip(*formatted_rows)]  # Sorry future reader
 
         return '\n'.join('  '.join(s.ljust(min_widths[i]) for i, s in enumerate(row)) for row in formatted_rows)
 
