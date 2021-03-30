@@ -61,31 +61,44 @@ class TournamentSubmit(BaseTournament):
     @staticmethod
     def add_or_check_player(tournament_dir: Path, user: discord.User, nickname: str):
         """Given a discord user and nickname, register this participant or verify they match the originally-registered
-        pairing.
+        pairing. Return their team name if any or else None.
         """
-        # Register this discord_id: [discord_tag, author_name] mapping if it is not already registered
-        # If the solution's author_name conflicts with that of another player, request they change it
         with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
             participants = json.load(f)
 
         discord_tag = str(user)
-        if discord_tag in participants:
-            if nickname != participants[discord_tag][1]:
+
+        # If the player is part of a team and submitted under their team name, do nothing
+        if (discord_tag in participants
+                and 'team' in participants[discord_tag]
+                and nickname == participants[discord_tag]['team']):
+            return participants[discord_tag]['team']
+
+        # If they aren't submitting under a team name, check if the nickname has already been set or must be set now
+        if discord_tag in participants and 'name' in participants[discord_tag]:
+            if nickname != participants[discord_tag]['name']:
                 # TODO: Could allow name changes but it would be a lot of work and potentially confusing for the
                 #       other participants, probably should only do this case-by-case and manually
                 raise ValueError(f"Given author name `{nickname}` doesn't match your prior submissions':"
-                                 + f" `{participants[discord_tag][1]}`; please talk to the"
+                                 + f" `{participants[discord_tag]['name']}`; please talk to the"
                                  + " tournament host if you would like a name change.")
         else:
-            # First submission
-            if nickname in (name for _, name in participants.values()):
+            # Set nickname for the first time
+            if any(('name' in d and nickname == d['name'])
+                   or ('team' in d and nickname == d['team'])
+                   for d in participants.values()):
                 raise PermissionError(f"Solution author name `{nickname}` is already in use by another participant,"
                                       + " please choose another (or login to the correct discord account).")
-            # Store both user tag and ID since former is TO-readable and latter is API-usable
-            participants[discord_tag] = [user.id, nickname]
 
-        with open(tournament_dir / 'participants.json', 'w', encoding='utf-8') as f:
-            json.dump(participants, f, ensure_ascii=False, indent=4)
+            if discord_tag not in participants:
+                participants[discord_tag] = {'id': user.id}
+
+            participants[discord_tag]['name'] = nickname
+
+            with open(tournament_dir / 'participants.json', 'w', encoding='utf-8') as f:
+                json.dump(participants, f, ensure_ascii=False, indent=4)
+
+        return participants[discord_tag]['team'] if 'team' in participants[discord_tag] else None
 
     # TODO: Accept blurb: https://discordpy.readthedocs.io/en/latest/ext/commands/commands.html#keyword-only-arguments
     @commands.command(name='tournament-submit', aliases=['ts'])
@@ -103,11 +116,20 @@ class TournamentSubmit(BaseTournament):
             msg = None
             try:
                 level_name, author, expected_score, soln_name = schem.Solution.parse_metadata(soln_str)
-                soln_descr = schem.Solution.describe(level_name, author, expected_score, soln_name)
 
                 # Skip participant name checks for the TO backdoor
                 if not is_tournament_host(ctx):
-                    self.add_or_check_player(tournament_dir, ctx.message.author, author)
+                    team_name = self.add_or_check_player(tournament_dir, ctx.message.author, author)
+
+                    # Change the author name if the submitter is part of a team
+                    if team_name is not None:
+                        author = team_name
+
+                # Prefix the solution name with "[author] " for readability on import, and replace author if in a team
+                new_soln_name = f"[{author}]" if soln_name is None else f"[{author}] {soln_name}"
+                old_metadata_line = soln_str.strip().split('\n', maxsplit=1)[0]
+                new_metadata_line = f"SOLUTION:{level_name},{author},{expected_score},{new_soln_name}"
+                soln_str = soln_str.replace(old_metadata_line, new_metadata_line, 1)
 
                 # Check the round exists and the message is within its submission period
                 self.verify_round_submission_time(ctx.message, tournament_metadata, level_name)
@@ -120,6 +142,7 @@ class TournamentSubmit(BaseTournament):
 
                     # Verify the solution
                     # TODO: Provide seconds or minutes ETA based on estimate of 2,000,000 cycles / min (/ reactor?)
+                    soln_descr = schem.Solution.describe(level_name, author, expected_score, soln_name)
                     msg = await ctx.send(f"Running {soln_descr}, this should take < 30s barring an absurd cycle count...")
 
                     solution = schem.Solution(level, soln_str)
@@ -139,7 +162,7 @@ class TournamentSubmit(BaseTournament):
                     metric = round_metadata['metric']
                     soln_metric_score = eval_metric(solution, metric)
 
-                    reply = f"Successfully validated {soln_descr}, metric score: {round(soln_metric_score, 3)}"
+                    await msg.edit(content=f"Successfully validated {soln_descr}, metric score: {round(soln_metric_score, 3)}")
 
                     # Update solutions.txt
                     with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as f:
@@ -156,10 +179,14 @@ class TournamentSubmit(BaseTournament):
                             #       modify the metric after the puzzle opens if necessary
                             old_metric_score = eval_metric(schem.Solution(level, cur_soln_str), metric)
                             if soln_metric_score > old_metric_score:
-                                reply += "\nWarning: This solution regresses your last submission's metric score, previously: " \
-                                         + str(round(old_metric_score, 3))
-                                if reaction == '✅':
-                                    reaction = '⚠'
+                                ctx.message.add_reaction('⚠')
+
+                                confirm_msg = await ctx.send(
+                                    "Warning: This solution regresses your last submission's metric score, previously: "
+                                    + str(round(old_metric_score, 3)))
+                                if not await self.wait_for_confirmation(ctx, confirm_msg):
+                                    ctx.message.add_reaction('❌')
+                                    return
                         else:
                             new_soln_strs.append(cur_soln_str)
 
@@ -170,8 +197,6 @@ class TournamentSubmit(BaseTournament):
                         f.write('\n'.join(new_soln_strs))
 
                     # TODO: Update submissions_history.txt with time, name, score, and blurb
-
-                    await msg.edit(content=reply)
             except Exception as e:
                 reaction = '❌'
                 print(f"{type(e).__name__}: {e}")
@@ -199,6 +224,12 @@ class TournamentSubmit(BaseTournament):
 
         # Register or verify this participant's nickname
         self.add_or_check_player(tournament_dir, ctx.message.author, author)
+
+        # Prefix the solution name with "[author] " for readability on import
+        soln_name = f"[{author}]" if soln_name is None else f"[{author}] {soln_name}"
+        old_metadata_line = soln_str.strip().split('\n', maxsplit=1)[0]
+        new_metadata_line = f"SOLUTION:{level_name},{author},{expected_score},{soln_name}"
+        soln_str = soln_str.replace(old_metadata_line, new_metadata_line, 1)
 
         # Check the round exists and the message is within its submission period
         self.verify_round_submission_time(ctx.message, tournament_metadata, level_name)
@@ -232,7 +263,7 @@ class TournamentSubmit(BaseTournament):
             for cur_soln_str in schem.Solution.split_solutions(solns_str):
                 _, cur_author, _, cur_soln_name = schem.Solution.parse_metadata(cur_soln_str)
                 if cur_author == author and cur_soln_name == soln_name:
-                    if not soln_name:
+                    if soln_name == f"[{author}]":  # The default label only
                         reply += "\nWarning: Solution has no name, and replaces your previous unnamed fun submission." \
                                  + " Consider naming your fun submissions for readability and to submit multiple of them!"
                     else:
@@ -342,7 +373,7 @@ class TournamentSubmit(BaseTournament):
         round_metadata = tournament_metadata['rounds'][puzzle_name]
         round_dir = tournament_dir / round_metadata['dir']
 
-        # Prevent removal from an round whose results have already been published
+        # Prevent removal from a round whose results have already been published
         if 'end_post' in round_metadata:
             raise ValueError("Cannot remove submission from already-closed round!")
 

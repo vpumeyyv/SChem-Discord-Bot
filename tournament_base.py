@@ -94,7 +94,7 @@ class BaseTournament(commands.Cog):
     #     active_tournament.txt -> "slugified_tournament_name_1"
     #     slugified_tournament_name_1/
     #         tournament_metadata.json -> name, host, etc, + round dirs / metadata
-    #         participants.json        -> discord_tag: discord_id, nickname (as it will appear in solution exports)
+    #         participants.json        -> discord_tag: discord_id, nickname, team_name (if any)
     #         standings.json           -> 'rounds': {puzzle_name: {player: score}}, 'total': {player: score}
     #         bonus1_puzzleA/
     #         round1_puzzleB/
@@ -147,6 +147,30 @@ class BaseTournament(commands.Cog):
                 if 'end_post' not in tournament_metadata:
                     self.tournament_results_task = self.bot.loop.create_task(self.announce_tournament_results(tournament_metadata))
 
+    async def wait_for_confirmation(self, ctx, confirm_msg, confirm_react='✅', cancel_react='❌', timeout_seconds=30):
+        """Wait for a reaction to the given message confirming an operation (by the user who created the passed
+        context), returning True if they confirm and False otherwise. If the message is cancelled or the given timeout
+        is reached, also send a message in the given context indicating the operation was cancelled.
+        """
+        def check(reaction_event):
+            return (reaction_event.message_id == confirm_msg.id
+                    and reaction_event.user_id == ctx.message.author.id
+                    and str(reaction_event.emoji) in (confirm_react, cancel_react))
+
+        try:
+            # reaction_add doesn't work in DMs without the `members` intent given to the Bot constructor, which we don't
+            # really need (see https://discordpy.readthedocs.io/en/latest/api.html#discord.on_reaction_add)
+            reaction_event = await self.bot.wait_for('raw_reaction_add', timeout=timeout_seconds, check=check)
+
+            if str(reaction_event.emoji) == confirm_react:
+                return True
+            else:
+                await ctx.send('Operation cancelled!')
+                return False
+        except asyncio.TimeoutError:
+            await ctx.send('Operation cancelled!')
+            return False
+
     def get_active_tournament_dir_and_metadata(self, is_host=False):
         """Helper to fetch the active tournament directory and metadata. Raise error if there is no active tournament
         or if is_host not provided and the tournament hasn't been announced.
@@ -168,7 +192,7 @@ class BaseTournament(commands.Cog):
 
     @staticmethod
     def get_player_name(tournament_dir, discord_user: discord.User, missing_ok=True):
-        """Given a discord user, get their tournament nickname as set by their first submission."""
+        """Given a discord user, get their nickname, or else team name if they are part of a team."""
         with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
             participants = json.load(f)
 
@@ -179,7 +203,12 @@ class BaseTournament(commands.Cog):
             else:
                 raise Exception("You have no current tournament submissions.")
 
-        return participants[discord_tag][1]
+        if 'team' in participants[discord_tag]:
+            return participants[discord_tag]['team']
+        else:
+            assert 'name' in participants[discord_tag], \
+                "Internal Error: Missing nickname or team name in participant info"
+            return participants[discord_tag]['name']
 
     @staticmethod
     def get_puzzle_name(tournament_metadata, round_or_puzzle_name, is_host=False, missing_ok=True):
@@ -254,10 +283,20 @@ class BaseTournament(commands.Cog):
         """Given a tournament's directory, return a string of the tournament standings"""
         with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:
             standings = json.load(f)
+        table = [[k, v] for k, v in standings['total'].items()]
 
-        ranked_standings = cls.sorted_and_ranked(standings['total'].items(), desc=True)
+        # Display each participant by nickname if possible, falling back to discord_tag if not
+        # Awkward that it's stored only by discord tag, but nickname is not guaranteed to exist in the case of a team,
+        # and storing a mix runs into issues with keeping them unique - if someone sets their nickname to someone else's
+        # discord tag before that person has joined as a participant, we'd be in a mess.
+        with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
+            participants = json.load(f)
+        for row in table:
+            discord_tag = row[0]
+            if discord_tag in participants and 'name' in participants[discord_tag]:
+                row[0] = participants[discord_tag]['name']
 
-        return cls.table_str(('Name', 'Score'), ranked_standings)
+        return cls.table_str(('#', 'Name', 'Score'), cls.sorted_and_ranked(table, desc=True))
 
     @staticmethod
     def tournament_announcement(tournament_metadata):
@@ -322,156 +361,6 @@ class BaseTournament(commands.Cog):
         except Exception as e:
             print(e)
 
-    async def announce_round_start(self, puzzle_name, round_metadata):
-        """Wait until the round start date and then announce it."""
-        try:
-            assert 'start_post' not in round_metadata, "Round has already been announced!"
-
-            # Wait until the round start time
-            start = round_metadata['start']
-            await wait_until(datetime.fromisoformat(start))
-
-            await self.bot.wait_until_ready()  # Looks awkward but apparently get_channel can return None if bot isn't ready
-            channel = self.bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
-
-            async with self.tournament_metadata_write_lock:
-                # Reread the tournament metadata since it may have changed
-                tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
-                round_metadata = tournament_metadata['rounds'][puzzle_name]
-                assert round_metadata['start'] == start, \
-                    "Round start changed but original announcement task was not cancelled"
-                assert 'start_post' not in round_metadata, \
-                    "Round was announced while announcement task was still scheduled"
-
-                print(f"Announcing {puzzle_name} start")
-                embed, attachment = self.round_announcement(tournament_dir, tournament_metadata, puzzle_name)
-                msg = await channel.send(embed=embed, file=attachment)
-
-                # Keep the link to the original announcement post for !tournament-info. We can also check this to know
-                # whether we've already done an announcement post
-                round_metadata['start_post'] = msg.jump_url
-
-                with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
-                    json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
-
-            # Create a submission lock for the puzzle and schedule the round results task
-            self.puzzle_submission_locks[puzzle_name] = PuzzleSubmissionsLock()
-            self.round_results_tasks[puzzle_name] = self.bot.loop.create_task(self.announce_round_results(puzzle_name, round_metadata))
-
-            # Remove this task
-            del self.round_start_tasks[puzzle_name]
-        except Exception as e:
-            print(e)
-
-    async def announce_round_results(self, puzzle_name, round_metadata):
-        """Wait until the round end date and then announce its results."""
-        try:
-            assert 'end_post' not in round_metadata, "Round results have already been announced!"
-
-            # Wait until the round start time + 5 seconds to ensure last-second submitters have grabbed the submission lock
-            end = round_metadata['end']
-            await wait_until(datetime.fromisoformat(end) + timedelta(seconds=5))
-
-            await self.bot.wait_until_ready()  # Looks awkward but apparently get_channel can return None if bot isn't ready
-            channel = self.bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
-
-            async with self.tournament_metadata_write_lock:
-                # Reread the tournament metadata since it may have changed
-                tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
-                round_metadata = tournament_metadata['rounds'][puzzle_name]
-                assert round_metadata['end'] == end, \
-                    "Round end changed but original results announcement task was not cancelled"
-                assert 'end_post' not in round_metadata, \
-                    "Round results were announced while results announcement task was still scheduled"
-
-                print(f"Announcing {puzzle_name} results")
-                await self.puzzle_submission_locks[puzzle_name].lock_and_wait_for_submitters()
-                msg_strings, attachments, standings_delta = \
-                    self.round_results_announcement_and_standings_change(tournament_dir, tournament_metadata, puzzle_name)
-
-                # Increment the tournament's standings
-                with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:
-                    standings = json.load(f)
-
-                standings['rounds'][puzzle_name] = standings_delta
-                for player, points in standings_delta.items():
-                    if points > 0:
-                        if player not in standings['total']:
-                            standings['total'][player] = 0
-                        standings['total'][player] += points
-
-                with open(tournament_dir / 'standings.json', 'w', encoding='utf-8') as f:
-                    json.dump(standings, f)
-
-                # Send each of the sub-2000 char announcement messages, adding the attachments to the last one
-                # Set the end post link to that of the first sent message
-                for i, msg_string in enumerate(msg_strings):
-                    if i < len(msg_strings) - 1:
-                        msg = await channel.send(msg_string)
-                    else:
-                        msg = await channel.send(msg_string, files=attachments)
-
-                    if i == 0:
-                        round_metadata['end_post'] = msg.jump_url
-
-                del self.puzzle_submission_locks[puzzle_name]
-
-                with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
-                    json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
-
-            # Remove this task
-            del self.round_results_tasks[puzzle_name]
-        except Exception as e:
-            print(e)
-
-    async def announce_tournament_results(self, tournament_metadata):
-        """Wait until the tournament end date and then announce its results."""
-        try:
-            assert 'end_post' not in tournament_metadata, "Tournament results have already been announced!"
-
-            # Wait until the tournament end time
-            end = tournament_metadata['end']
-            await wait_until(datetime.fromisoformat(end))
-
-            # Wait for any remaining puzzle rounds to be tallied by round results tasks (they take variable time
-            # depending on any still-running submissions)
-            # We'll know this is done when all round results tasks have been deleted
-            while self.round_results_tasks:
-                await asyncio.sleep(10)
-
-            await self.bot.wait_until_ready()  # Looks awkward but apparently get_channel can return None if bot isn't ready
-            channel = self.bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
-
-            async with self.tournament_metadata_write_lock:
-                # Reread the tournament metadata since it may have changed
-                tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
-                assert tournament_metadata['end'] == end, \
-                    "Tournament end changed but original results announcement task was not cancelled"
-                assert 'end_post' not in tournament_metadata, \
-                    "Tournament results were announced while results announcement task was still scheduled"
-
-                print("Announcing tournament results")
-                msg_strings = self.table_msgs(title_line=f"**{tournament_metadata['name']} Results**",
-                                              table_text=self.standings_str(tournament_dir))
-
-                # Send each of the sub-2000 char announcement messages
-                # Set the end post link to that of the first sent message
-                for i, msg_string in enumerate(msg_strings):
-                    msg = await channel.send(msg_string)
-
-                    if i == 0:
-                        tournament_metadata['end_post'] = msg.jump_url
-
-                self.ACTIVE_TOURNAMENT_FILE.unlink()
-
-                with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
-                    json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
-
-            # Remove this task
-            self.tournament_results_task = None
-        except Exception as e:
-            print(e)
-
     @staticmethod
     def round_announcement(tournament_dir, tournament_metadata, puzzle_name,
                            level_code=None, attachment=None):
@@ -513,9 +402,50 @@ class BaseTournament(commands.Cog):
 
         return embed, attachment
 
+    async def announce_round_start(self, puzzle_name, round_metadata):
+        """Wait until the round start date and then announce it."""
+        try:
+            assert 'start_post' not in round_metadata, "Round has already been announced!"
+
+            # Wait until the round start time
+            start = round_metadata['start']
+            await wait_until(datetime.fromisoformat(start))
+
+            await self.bot.wait_until_ready()  # Looks awkward but apparently get_channel can return None if bot isn't ready
+            channel = self.bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
+
+            async with self.tournament_metadata_write_lock:
+                # Reread the tournament metadata since it may have changed
+                tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
+                round_metadata = tournament_metadata['rounds'][puzzle_name]
+                assert round_metadata['start'] == start, \
+                    "Round start changed but original announcement task was not cancelled"
+                assert 'start_post' not in round_metadata, \
+                    "Round was announced while announcement task was still scheduled"
+
+                print(f"Announcing {puzzle_name} start")
+                embed, attachment = self.round_announcement(tournament_dir, tournament_metadata, puzzle_name)
+                msg = await channel.send(embed=embed, file=attachment)
+
+                # Keep the link to the original announcement post for !tournament-info. We can also check this to know
+                # whether we've already done an announcement post
+                round_metadata['start_post'] = msg.jump_url
+
+                with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
+                    json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
+
+            # Create a submission lock for the puzzle and schedule the round results task
+            self.puzzle_submission_locks[puzzle_name] = PuzzleSubmissionsLock()
+            self.round_results_tasks[puzzle_name] = self.bot.loop.create_task(self.announce_round_results(puzzle_name, round_metadata))
+
+            # Remove this task
+            del self.round_start_tasks[puzzle_name]
+        except Exception as e:
+            print(e)
+
     def round_results_announcement_and_standings_change(self, tournament_dir, tournament_metadata, puzzle_name):
         """Given tournament dir/metadata and a specified puzzle, return a list of strings of the announcement message(s)
-        text for the puzzle results, a list of attachments, and a dict indicating the changes to the standings.
+        text for the puzzle results, a list of attachments, and a dict indicating the point changes by player or team.
         """
         round_metadata = tournament_metadata['rounds'][puzzle_name]
         round_dir = tournament_dir / round_metadata['dir']
@@ -614,3 +544,141 @@ class BaseTournament(commands.Cog):
             attachments.append(discord.File(str(fun_solns_file), filename=fun_solns_file.name))
 
         return msg_strings, attachments, standings_scores
+
+    @staticmethod
+    def update_standings(tournament_dir, puzzle_name, standings_delta):
+        """Given a dict of player/team names to points delta, update the tournament standings."""
+        with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:
+            standings = json.load(f)
+
+        standings['rounds'][puzzle_name] = standings_delta
+
+        # Create a reverse nickname_or_team_name : discord_tag dict for ease of lookup
+        with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
+            participants = json.load(f)
+        name_to_discord_tags = {}
+        for discord_tag, player_info in participants.items():
+            if 'team' in player_info:
+                if player_info['team'] not in name_to_discord_tags:
+                    name_to_discord_tags[player_info['team']] = []
+                name_to_discord_tags[player_info['team']].append(discord_tag)
+            else:
+                name_to_discord_tags[player_info['name']] = [discord_tag]
+
+        # Add to the standings, ignoring 0 scores
+        for name, points in standings_delta.items():
+            if points != 0:
+                # Handle the case where a player's submission was submitted by the TO backdoor and they have no
+                # participant info. Name collision-avoidance is not guaranteed in this case
+                if name not in name_to_discord_tags:
+                    if name not in standings['total']:
+                        standings['total'][name] = 0
+                    standings['total'][name] += points
+
+                    continue
+
+                for discord_tag in name_to_discord_tags[name]:
+                    if discord_tag not in standings['total']:
+                        standings['total'][discord_tag] = 0
+                    standings['total'][discord_tag] += points
+
+        with open(tournament_dir / 'standings.json', 'w', encoding='utf-8') as f:
+            json.dump(standings, f, ensure_ascii=False, indent=4)
+
+    async def announce_round_results(self, puzzle_name, round_metadata):
+        """Wait until the round end date and then announce its results."""
+        try:
+            assert 'end_post' not in round_metadata, "Round results have already been announced!"
+
+            # Wait until the round start time + 5 seconds to ensure last-second submitters have grabbed the submission lock
+            end = round_metadata['end']
+            await wait_until(datetime.fromisoformat(end) + timedelta(seconds=5))
+
+            await self.bot.wait_until_ready()  # Looks awkward but apparently get_channel can return None if bot isn't ready
+            channel = self.bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
+
+            async with self.tournament_metadata_write_lock:
+                # Reread the tournament metadata since it may have changed
+                tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
+                round_metadata = tournament_metadata['rounds'][puzzle_name]
+                assert round_metadata['end'] == end, \
+                    "Round end changed but original results announcement task was not cancelled"
+                assert 'end_post' not in round_metadata, \
+                    "Round results were announced while results announcement task was still scheduled"
+
+                print(f"Announcing {puzzle_name} results")
+                await self.puzzle_submission_locks[puzzle_name].lock_and_wait_for_submitters()
+                msg_strings, attachments, standings_delta = \
+                    self.round_results_announcement_and_standings_change(tournament_dir, tournament_metadata, puzzle_name)
+
+                # Increment the tournament's standings
+                self.update_standings(tournament_dir, puzzle_name, standings_delta)
+
+                # Send each of the sub-2000 char announcement messages, adding the attachments to the last one
+                # Set the end post link to that of the first sent message
+                for i, msg_string in enumerate(msg_strings):
+                    if i < len(msg_strings) - 1:
+                        msg = await channel.send(msg_string)
+                    else:
+                        msg = await channel.send(msg_string, files=attachments)
+
+                    if i == 0:
+                        round_metadata['end_post'] = msg.jump_url
+
+                del self.puzzle_submission_locks[puzzle_name]
+
+                with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
+                    json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
+
+            # Remove this task
+            del self.round_results_tasks[puzzle_name]
+        except Exception as e:
+            print(e)
+
+    async def announce_tournament_results(self, tournament_metadata):
+        """Wait until the tournament end date and then announce its results."""
+        try:
+            assert 'end_post' not in tournament_metadata, "Tournament results have already been announced!"
+
+            # Wait until the tournament end time
+            end = tournament_metadata['end']
+            await wait_until(datetime.fromisoformat(end))
+
+            # Wait for any remaining puzzle rounds to be tallied by round results tasks (they take variable time
+            # depending on any still-running submissions)
+            # We'll know this is done when all round results tasks have been deleted
+            while self.round_results_tasks:
+                await asyncio.sleep(10)
+
+            await self.bot.wait_until_ready()  # Looks awkward but apparently get_channel can return None if bot isn't ready
+            channel = self.bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
+
+            async with self.tournament_metadata_write_lock:
+                # Reread the tournament metadata since it may have changed
+                tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
+                assert tournament_metadata['end'] == end, \
+                    "Tournament end changed but original results announcement task was not cancelled"
+                assert 'end_post' not in tournament_metadata, \
+                    "Tournament results were announced while results announcement task was still scheduled"
+
+                print("Announcing tournament results")
+                msg_strings = self.table_msgs(title_line=f"**{tournament_metadata['name']} Results**",
+                                              table_text=self.standings_str(tournament_dir))
+
+                # Send each of the sub-2000 char announcement messages
+                # Set the end post link to that of the first sent message
+                for i, msg_string in enumerate(msg_strings):
+                    msg = await channel.send(msg_string)
+
+                    if i == 0:
+                        tournament_metadata['end_post'] = msg.jump_url
+
+                self.ACTIVE_TOURNAMENT_FILE.unlink()
+
+                with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
+                    json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
+
+            # Remove this task
+            self.tournament_results_task = None
+        except Exception as e:
+            print(e)

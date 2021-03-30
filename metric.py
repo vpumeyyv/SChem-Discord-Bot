@@ -196,7 +196,8 @@ def get_metametric_term_values(metametric_str, metametric_vars):
 
     while rel_metric_ast is rank_ast is not None:
         # Strip all constant terms until we've separated metric from placement
-        non_const_terms = [node for node in ast.iter_child_nodes(ast_tree) if not isinstance(node, ast.Constant)]
+        non_const_terms = [node for node in ast.iter_child_nodes(rel_metric_ast) if not isinstance(node, ast.Constant)
+                           and node is not ast_tree.op]  # iter_child_node includes its operator for some reason...
         assert non_const_terms, f"Internal error while separating terms of {metametric_str}: no variable terms"
 
         if len(non_const_terms) == 1:

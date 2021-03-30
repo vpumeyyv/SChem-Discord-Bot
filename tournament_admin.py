@@ -57,7 +57,7 @@ class TournamentAdmin(BaseTournament):
         hosts.add(discord_tag)
 
         with open(self.TOURNAMENTS_DIR / 'hosts.json', 'w', encoding='utf-8') as f:
-            json.dump({'hosts': list(hosts)}, f)
+            json.dump({'hosts': list(hosts)}, f, ensure_ascii=False, indent=4)
 
         await ctx.send(f"{discord_tag} added to tournament hosts.")
 
@@ -187,6 +187,7 @@ class TournamentAdmin(BaseTournament):
             modified_round_ends = set()
             modified_open_round_ends = set()
 
+            # TODO: Re-calculate previous rounds' scores based on metametric change
             if args.metametric:
                 validate_metametric(args.metametric)
 
@@ -417,30 +418,6 @@ class TournamentAdmin(BaseTournament):
             # TODO 2: Pareto frontier using the full submission history!
 
         await ctx.send(f"Successfully added {round_name} {level.name} to {tournament_metadata['name']}")
-
-    async def wait_for_confirmation(self, ctx, confirm_msg, confirm_react='✅', cancel_react='❌', timeout_seconds=30):
-        """Wait for a reaction to the given message confirming an operation (by the user who created the passed
-        context), returning True if they confirm and False otherwise. If the message is cancelled or the given timeout
-        is reached, also send a message in the given context indicating the operation was cancelled.
-        """
-        def check(reaction_event):
-            return (reaction_event.message_id == confirm_msg.id
-                    and reaction_event.user_id == ctx.message.author.id
-                    and str(reaction_event.emoji) in (confirm_react, cancel_react))
-
-        try:
-            # reaction_add doesn't work in DMs without the `members` intent given to the Bot constructor, which we don't
-            # really need (see https://discordpy.readthedocs.io/en/latest/api.html#discord.on_reaction_add)
-            reaction_event = await self.bot.wait_for('raw_reaction_add', timeout=timeout_seconds, check=check)
-
-            if str(reaction_event.emoji) == confirm_react:
-                return True
-            else:
-                await ctx.send('Operation cancelled!')
-                return False
-        except asyncio.TimeoutError:
-            await ctx.send('Operation cancelled!')
-            return False
 
     @commands.command(name='tournament-puzzle-update', aliases=['tournament-puzzle-edit', 'tournament-update-puzzle',
                                                                 'tournament-edit-puzzle'])
@@ -739,7 +716,7 @@ class TournamentAdmin(BaseTournament):
 
                 # Construct a name:id dict for quicker lookups by name
                 # TODO: This won't play nice with teams, need name -> list_of_ids
-                name_to_id = {name: id for id, name in participants.values()}
+                name_to_id = {d['name']: d['id'] for d in participants.values() if 'name' in d}
                 non_discord_players = set()
 
                 for player_name in invalid_soln_authors:
@@ -790,7 +767,8 @@ class TournamentAdmin(BaseTournament):
                 timeout_seconds = 30
                 warn_msg = await ctx.send(
                     f"Warning: This round's start date ({format_date(round_metadata['start'])}) has already passed"
-                    + " and deleting it will delete any player solutions. Are you sure you wish to continue?"
+                    + " and deleting it will delete any player solutions. Maybe you wanted tournament-puzzle-update?"
+                    + " Are you sure you wish to continue?"
                     + f"\nReact to this message with ✅ within {timeout_seconds} seconds to delete anyway, ❌ to cancel.")
 
                 if not await self.wait_for_confirmation(ctx, warn_msg):
@@ -803,14 +781,17 @@ class TournamentAdmin(BaseTournament):
 
             # Subtract this puzzle from the tournament standings if its results have already been tallied
             if 'end_post' in round_metadata:
+                # TODO: Refactor this, probably round standings should only live in the round's directory
                 with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:
                     standings = json.load(f)
 
-                for player, points in standings['rounds'][puzzle_name].items():
-                    if player in standings['total']:  # Check needed due to 0-scores being excluded from total
-                        standings['total'][player] -= points
-                        if standings['total'][player] == 0:
-                            del standings['total'][player]
+                negative_round_standings = {k: -v for k, v in standings['rounds'][puzzle_name].items()}
+                self.update_standings(tournament_dir, puzzle_name, negative_round_standings)
+
+                # Delete the puzzle from the updated standings
+                with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:
+                    standings = json.load(f)
+
                 del standings['rounds'][puzzle_name]
 
                 with open(tournament_dir / 'standings.json', 'w', encoding='utf-8') as f:
