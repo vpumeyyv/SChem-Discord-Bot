@@ -433,9 +433,9 @@ class TournamentAdmin(BaseTournament):
                                                          'start': start,
                                                          'end': end}
 
-            # Re-sort rounds by start date
+            # Re-sort rounds by start date and secondarily by round name
             tournament_metadata['rounds'] = dict(sorted(tournament_metadata['rounds'].items(),
-                                                        key=lambda x: x[1]['start']))
+                                                        key=lambda x: (x[1]['start'], x[1]['round_name'])))
 
             # Set up the round directory
             round_dir = tournament_dir / round_dir_name
