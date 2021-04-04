@@ -30,9 +30,6 @@ class TournamentInfo(BaseTournament):
 
             if 'start_post' in tournament_metadata:
                 embed.description += f"[Announcement]({tournament_metadata['start_post']})"
-            else:
-                embed.description += f"Start: {format_date(tournament_metadata['start'])}" \
-                                     + f" | End: {format_date(tournament_metadata['end'])}"
 
             embed.description += "\n**Rounds**:"
             for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
@@ -47,14 +44,18 @@ class TournamentInfo(BaseTournament):
                                          + f" Start: {format_date(round_metadata['start'])}" \
                                          + f" | End: {format_date(round_metadata['end'])}"
 
-            # Create a standings table (in chunks under discord's char limit as needed)
-            standings_msgs = self.table_msgs(title_line="**Standings**",
-                                             table_text=self.standings_str(tournament_dir))
-
-            # Send all the messages
             await ctx.send(embed=embed)
-            for standings_msg in standings_msgs:
-                await ctx.send(standings_msg)
+
+            if 'start_post' in tournament_metadata:
+                # Create a standings table (in chunks under discord's char limit as needed)
+                for standings_msg in self.table_msgs(title_line="**Standings**",
+                                                     table_text=self.standings_str(tournament_dir)):
+                    await ctx.send(standings_msg)
+            else:
+                # Preview the tournament announcement post
+                await ctx.send(f"On {format_date(tournament_metadata['start'])} the following announcement will be sent:")
+                for msg_string in self.tournament_announcement(tournament_dir, tournament_metadata):
+                    await ctx.send(msg_string)
 
             return
 

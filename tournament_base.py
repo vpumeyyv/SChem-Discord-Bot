@@ -299,13 +299,19 @@ class BaseTournament(commands.Cog):
         return cls.table_str(('#', 'Name', 'Score'), cls.sorted_and_ranked(table, desc=True))
 
     @staticmethod
-    def tournament_announcement(tournament_metadata):
+    def tournament_announcement(tournament_dir, tournament_metadata):
         """Return the tournament announcement text."""
+
+        with open(tournament_dir / 'description.txt', encoding='utf-8') as f:
+            description = f.read().strip()
+
         announcement = f"**Announcing the {tournament_metadata['name']}**"
+        announcement += f"\n{description}"
         announcement += f"\nMetametric: `{tournament_metadata['metametric']}`"
         announcement += f"\nEnd date: {format_date(tournament_metadata['end'])}"
 
-        return announcement
+        # Return the announcement in chunks under discord's char limit
+        return split_by_char_limit(announcement, 1999)
 
     @staticmethod
     def table_msgs(title_line, table_text):
@@ -341,8 +347,14 @@ class BaseTournament(commands.Cog):
                     "Tournament was announced while announcement task was still scheduled"
 
                 print("Announcing tournament")
-                msg = await channel.send(self.tournament_announcement(tournament_metadata))
-                tournament_metadata['start_post'] = msg.jump_url
+                announcement_msgs = self.tournament_announcement(tournament_dir, tournament_metadata)
+
+                # Send each of the announcement messages, setting the announcement link to the first of these
+                for i, msg_string in enumerate(announcement_msgs):
+                    msg = await channel.send(msg_string)
+
+                    if i == 0:
+                        tournament_metadata['start_post'] = msg.jump_url
 
                 with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
                     json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
@@ -368,10 +380,9 @@ class BaseTournament(commands.Cog):
         Return the announcement's embed and puzzle file.
         """
         round_metadata = tournament_metadata['rounds'][puzzle_name]
+        round_dir = tournament_dir / round_metadata['dir']
 
         if attachment is None:
-            round_dir = tournament_dir / round_metadata['dir']
-
             puzzle_file = next(round_dir.glob('*.puzzle'), None)
             if puzzle_file is None:
                 raise FileNotFoundError(f"{round_metadata['round_name']} puzzle file not found")
@@ -382,10 +393,13 @@ class BaseTournament(commands.Cog):
 
         single_line_level_code = level_code.replace('\n', '')
 
+        with open(round_dir / 'description.txt', encoding='utf-8') as f:
+            description = f.read().strip()
+
         # Discord's embeds seem to be the only way to do a hyperlink to hide the giant puzzle preview link
-        # TODO: description=flavour_text
         embed = discord.Embed(author=tournament_metadata['name'],
-                              title=f"**Announcing {round_metadata['round_name']}, {puzzle_name}!**")
+                              title=f"**Announcing {round_metadata['round_name']}, {puzzle_name}!**",
+                              description=description)
         embed.add_field(name='Preview',
                         value=f"[Coranac Site]({CORANAC_SITE}?code={single_line_level_code})",
                         inline=True)

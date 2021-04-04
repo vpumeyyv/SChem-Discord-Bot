@@ -209,11 +209,17 @@ class TournamentSubmit(BaseTournament):
         await ctx.message.add_reaction(reaction)
 
     # TODO: Accept blurb: https://discordpy.readthedocs.io/en/latest/ext/commands/commands.html#keyword-only-arguments
+    # TODO: Limit each player to 5 non-scoring solutions
     @commands.command(name='tournament-submit-fun', aliases=['tsf', 'tournament-submit-non-scoring', 'tsns'])
     #@commands.dm_only()  # TODO: Give the bot permission to delete !tournament-submit messages from public channels
     #       since someone will inevitably forget to use DMs
     async def tournament_submit_fun(self, ctx):
-        """Submit the attached solution file to the tournament."""
+        """Submit the attached *non-scoring* solution file to the tournament.
+
+        Will replace any previous non-scoring solution of the same name.
+        There are currently no limits on how many non-scoring solutions you may submit;
+        please keep it reasonable (and use tournament-submission-fun-remove as needed).
+        """
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata()
 
         assert len(ctx.message.attachments) == 1, "Expected one attached solution file!"

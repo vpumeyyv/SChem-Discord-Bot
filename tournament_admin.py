@@ -104,7 +104,18 @@ class TournamentAdmin(BaseTournament):
                     puzzle_points * (your_metametric / best_metametric) points.
                     E.g. "4*(best_metric / your_metric) + (your_rank_idx / num_submitters)"
                     would split the weight of metric vs placement 80-20.
+        [Attachment] *.txt:
+            A .txt file containing a description to be included in the tournament
+            announcement post (name, end date and metametric will also be automatically
+            shown in the announcement post). For example, you might want to include how
+            long puzzles will be open for and how many puzzles the tournament will
+            include, along with additional rules clarifications.
         """
+        # Check attached description file
+        assert len(ctx.message.attachments) == 1, "Expected one attached tournament description file!"
+        description_file = ctx.message.attachments[0]
+        await self.read_attachment(description_file, extension='.txt')  # Make sure the file is parsable
+
         tournament_dir_name = slugify(name)  # Convert to a valid directory name
         assert tournament_dir_name, f"Invalid tournament name {name}"
 
@@ -136,6 +147,8 @@ class TournamentAdmin(BaseTournament):
             with open(tournament_dir / 'standings.json', 'w', encoding='utf-8') as f:
                 json.dump({'rounds': {}, 'total': {}}, f, ensure_ascii=False, indent=4)
 
+            await description_file.save(tournament_dir / 'description.txt')
+
             # Schedule the tournament announcement
             self.tournament_start_task = self.bot.loop.create_task(self.announce_tournament_start(tournament_metadata))
 
@@ -156,6 +169,8 @@ class TournamentAdmin(BaseTournament):
                        Double-quotes within a field's value should be avoided
                        as they will interfere with arg-parsing.
                        Unspecified fields will not be modified.
+        [Attachment] *.txt: If provided, update the tournament announcement description to the given text.
+
         E.g.: !tournament-update "name=2000 SpaceChem Tournament" end=2000-01-31T19:00-05:00
         """
         async with self.tournament_metadata_write_lock:
@@ -178,6 +193,15 @@ class TournamentAdmin(BaseTournament):
                 raise Exception("Unrecognized arguments included, double-check `!help tournament-update`")
 
             updated_fields = set(k for k, v in vars(args).items() if v)
+
+            # Check attached description file
+            if ctx.message.attachments:
+                assert 'start_post' not in tournament_metadata, "Cannot edit description after tournament announcement"
+                assert len(ctx.message.attachments) == 1, "At most one attached description file expected"
+                description_file = ctx.message.attachments[0]
+                await self.read_attachment(description_file, extension='.txt')  # Make sure the file is parsable
+                updated_fields.add('description')
+
             assert updated_fields, "Please specify field(s) to update"
 
             # Prepare a text post summarizing the changed fields
@@ -268,6 +292,10 @@ class TournamentAdmin(BaseTournament):
                 with open(self.ACTIVE_TOURNAMENT_FILE, 'w', encoding='utf-8') as f:
                     f.write(new_tournament_dir_name)
 
+            # Save new description file if any
+            if ctx.message.attachments:
+                await description_file.save(tournament_dir / 'description.txt')
+
             # Save changes to metadata file
             with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
                 json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
@@ -310,19 +338,17 @@ class TournamentAdmin(BaseTournament):
     #                                                    # In any case tournament-update should be sufficient for now
 
     @staticmethod
-    async def read_puzzle_attachment(discord_file):
-        if not discord_file.filename.endswith('.puzzle'):
-            # TODO: Could fall back to slugify(level.name) or slugify(round_name) for the .puzzle file name if the
-            #       extension doesn't match
-            raise ValueError("Attached file should use the extension .puzzle")
+    async def read_attachment(attachment, extension):
+        if not attachment.filename.endswith(extension):
+            raise ValueError(f"Attached file should use the extension {extension}")
 
-        level_bytes = await discord_file.read()
+        text_bytes = await attachment.read()
         try:
-            return level_bytes.decode("utf-8")
+            return text_bytes.decode("utf-8")
         except UnicodeDecodeError as e:
-            raise Exception("Attachment must be a plaintext file (containing a level export code).") from e
+            raise Exception(f"{attachment.filename} is not a plaintext file.") from e
 
-    # TODO: Puzzle flavour text
+    # TODO: max_cycles
     @commands.command(name='tournament-puzzle-add', aliases=['tpa', 'tournament-add-puzzle', 'tap'])
     @is_host
     #@commands.dm_only()
@@ -343,7 +369,7 @@ class TournamentAdmin(BaseTournament):
         points: # of points that the first place player will receive.
                 Other players will get points proportional to this based
                 on their relative metric score.
-        start: The datetime on which the puzzle will be announced and submissions opened.
+        start: The datetime when the puzzle will be announced and submissions opened.
                ISO format, default UTC.
                E.g. the following are all equivalent: 2000-01-31, "2000-01-31 00:00",
                     2000-01-30T19:00:00-05:00
@@ -351,12 +377,28 @@ class TournamentAdmin(BaseTournament):
              announced. Same format as `start`.
              If excluded, puzzle is open until the tournament is ended (e.g. the
              2019 tournament's 'Additional' puzzles).
+        [Attachment] *.puzzle:
+            A .puzzle file containing the puzzle export string, which will be
+            attached to the puzzle announcement post.
+        [Attachment] *.txt: Optional, since discord for desktop doesn't support
+            multiple attachments. Add this instead via !tournament-puzzle-update.
+            A .txt file containing a description to be included in the puzzle
+            announcement post (above args will also be automatically shown in
+            the announcement post). For example, you might want to include some
+            flavour text for the puzzle here, and/or extra rules like 'solution
+            must run forever'.
         """
-        # Check attached puzzle
-        assert len(ctx.message.attachments) == 1, "Expected one attached puzzle file!"
-        puzzle_file = ctx.message.attachments[0]
-        level_code = await self.read_puzzle_attachment(puzzle_file)
+        # Check attachments
+        assert 1 <= len(ctx.message.attachments) <= 2, "Expected 1-2 attachments (puzzle and optional description file)"
+
+        puzzle_file = next((f for f in ctx.message.attachments if f.filename.endswith('.puzzle')), None)
+        assert puzzle_file is not None, "Expected an attached puzzle file with extension `.puzzle`."
+        level_code = await self.read_attachment(puzzle_file, extension='.puzzle')
         level = schem.Level(level_code)
+
+        description_file = next((f for f in ctx.message.attachments if f.filename.endswith('.txt')), None)
+        if description_file:
+            await self.read_attachment(description_file, extension='.txt')  # Make sure the file is parsable
 
         validate_metric(metric)
 
@@ -398,6 +440,8 @@ class TournamentAdmin(BaseTournament):
             round_dir = tournament_dir / round_dir_name
             round_dir.mkdir(exist_ok=False)
             await puzzle_file.save(round_dir / puzzle_file.filename)
+            if description_file:
+                await description_file.save(round_dir / 'description.txt')
             (round_dir / 'solutions.txt').touch()
             (round_dir / 'solutions_fun.txt').touch()
 
@@ -429,15 +473,6 @@ class TournamentAdmin(BaseTournament):
         If the puzzle is already open, a post announcing the updated fields will
         be made and the original announcement post edited.
 
-        If the puzzle file is also updated, the following will also occur:
-            - Player solutions will be re-validated, and any invalidated
-              solutions will be removed and their authors DM'd to inform
-              them of this.
-            - As attachments cannot be edited/deleted, instead of editing
-              the original announcement post, a new announcement post will
-              be made (after the change summary post), and linked to from
-              the old announcement post.
-
         round_or_puzzle_name: (Case-insensitive) Round or puzzle to update.
                               May not be a closed puzzle.
         update_fields: Fields to update, specified like:
@@ -447,13 +482,23 @@ class TournamentAdmin(BaseTournament):
                        Double-quotes within a field's value should be avoided
                        as they will interfere with arg-parsing.
                        Unspecified fields will not be modified.
-                       A new puzzle file may also be attached.
+        [Attachment] *.puzzle: If provided, puzzle file is updated and the following occurs:
+                               - Player solutions will be re-validated, and any invalidated
+                                 solutions will be removed and their authors DM'd to inform
+                                 them of this.
+                               - As attachments cannot be edited/deleted, instead of editing
+                                 the original announcement post, a new announcement post will
+                                 be made (after the change summary post), and linked to from
+                                 the old announcement post.
+        [Attachment] *.txt: If provided, update the announcement description text.
+
         E.g.: !tournament-puzzle-update "Round 3" "round_name=Round 3.5" end=2000-01-31T19:17-05:00
         """
         async with self.tournament_metadata_write_lock:
             tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
             puzzle_name = self.get_puzzle_name(tournament_metadata, round_or_puzzle_name, is_host=True, missing_ok=False)
             round_metadata = tournament_metadata['rounds'][puzzle_name]
+            round_dir = tournament_dir / round_metadata['dir']
 
             if 'end_post' in round_metadata:
                 raise Exception("Cannot edit closed puzzle.")
@@ -475,7 +520,19 @@ class TournamentAdmin(BaseTournament):
             args_dict = vars(args)
             updated_fields = set(k for k, v in args_dict.items() if v)
 
-            assert updated_fields or ctx.message.attachments, "Please specify field(s) to update or attach new puzzle file"
+            # Check attachments
+            assert len(ctx.message.attachments) <= 2, "Too many attachments!"
+
+            assert len(list(f for f in ctx.message.attachments if f.filename.endswith('.puzzle'))) <= 1, \
+                "Expected at most one .puzzle file"
+            new_puzzle_file = next((f for f in ctx.message.attachments if f.filename.endswith('.puzzle')), None)
+
+            assert len(list(f for f in ctx.message.attachments if f.filename.endswith('.txt'))) <= 1, \
+                "Expected at most one .txt description file"
+            new_description_file = next((f for f in ctx.message.attachments if f.filename.endswith('.txt')), None)
+
+            assert updated_fields or ctx.message.attachments, \
+                "Please specify field(s) to update or attach new description or puzzle files"
 
             # Check that only changed fields were specified
             for k, v in args_dict.items():
@@ -506,6 +563,21 @@ class TournamentAdmin(BaseTournament):
             if args.metric:
                 validate_metric(args.metric)
 
+            if new_description_file is not None:
+                assert 'start_post' not in round_metadata, "Cannot update description on already-announced puzzle"
+                description = await self.read_attachment(new_description_file,
+                                                         extension='.txt')  # Make sure the file is parsable
+
+                # Make sure the caller didn't accidentally try to attach a .txt puzzle file
+                try:
+                    schem.Level(description)
+                except ValueError:
+                    pass
+                else:
+                    raise Exception("Please use .puzzle extension for puzzle file attachments.")
+
+                updated_fields.add('description')
+
             # Prepare a text post summarizing the changed fields
             # TODO: @tournament or some such
             summary_text = (f"**The tournament host has updated {round_metadata['round_name']}, {puzzle_name}**"
@@ -521,10 +593,8 @@ class TournamentAdmin(BaseTournament):
                     round_metadata[k] = v
 
             try:
-                if ctx.message.attachments:
-                    assert len(ctx.message.attachments) == 1, "Expected at most a single attached puzzle file!"
-                    new_puzzle_file = ctx.message.attachments[0]
-                    new_level_code = (await self.read_puzzle_attachment(new_puzzle_file)).strip().replace("\r\n", "\n")
+                if new_puzzle_file:
+                    new_level_code = (await self.read_attachment(new_puzzle_file, extension='.puzzle')).strip().replace("\r\n", "\n")
                     level = schem.Level(new_level_code)
 
                     # Make sure the new puzzle name doesn't conflict with any other rounds/puzzles
@@ -542,7 +612,6 @@ class TournamentAdmin(BaseTournament):
                                      "\n    Any players whose solutions were invalidated by this change have been DM'd.")
 
                     # Double-check that the puzzle code actually changed
-                    round_dir = tournament_dir / round_metadata['dir']
                     old_puzzle_file = next(round_dir.glob('*.puzzle'), None)
                     assert old_puzzle_file is not None, "Internal Error: puzzle file for specified round is missing"
                     with open(old_puzzle_file, 'r', encoding='utf-8') as f:
@@ -594,7 +663,6 @@ class TournamentAdmin(BaseTournament):
                             self.round_announcement(tournament_dir, tournament_metadata, new_puzzle_name,
                                                     level_code=new_level_code, attachment=(await new_puzzle_file.to_file()))
                 else:
-                    assert updated_fields, "Missing fields to update or puzzle file attachment!"
                     new_puzzle_name = puzzle_name
 
                     # If the round is open but we don't need to change the puzzle file, prepare an edit to the original
@@ -610,7 +678,7 @@ class TournamentAdmin(BaseTournament):
 
                     # Preview the changes-summary post, the new or edited announcement post, and the names of all players
                     # whose solutions were invalidated, and ask for TO confirmation
-                    if ctx.message.attachments:
+                    if new_puzzle_file:
                         # Edit the 'running solutions...' message
                         await msg.edit(content="The specified puzzle has already been opened so the following public"
                                                " announcement posts will be made:\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -646,7 +714,7 @@ class TournamentAdmin(BaseTournament):
                     if args.round_name and not ctx.message.attachments:
                         await self.puzzle_submission_locks[puzzle_name].lock_and_wait_for_submitters()
 
-                    if ctx.message.attachments:
+                    if new_puzzle_file:
                         # Save the new puzzle file
                         old_puzzle_file.unlink()
                         await new_puzzle_file.save(round_dir / new_puzzle_file.filename)
@@ -660,7 +728,7 @@ class TournamentAdmin(BaseTournament):
                     # the puzzle file changed
                     msg_id = round_metadata['start_post'].strip('/').split('/')[-1]
                     og_announcement = await channel.fetch_message(msg_id)
-                    if ctx.message.attachments:
+                    if new_puzzle_file:
                         # Make the changes-summary post
                         await channel.send(summary_text + "\n\nNew announcement post:")
 
@@ -677,7 +745,7 @@ class TournamentAdmin(BaseTournament):
                     # Create a new (open) submissions lock
                     del self.puzzle_submission_locks[puzzle_name]
                     self.puzzle_submission_locks[new_puzzle_name] = PuzzleSubmissionsLock()
-                elif ctx.message.attachments:
+                elif new_puzzle_file:
                     # Save the new puzzle file and update the tournament metadata's puzzle name as needed
                     old_puzzle_file.unlink()
                     await new_puzzle_file.save(round_dir / new_puzzle_file.filename)
@@ -688,6 +756,10 @@ class TournamentAdmin(BaseTournament):
                 # Note that this will have no effect if the lock was already restored or has changed names
                 if puzzle_name in self.puzzle_submission_locks:
                     self.puzzle_submission_locks[puzzle_name].unlock()
+
+            # Update the description file as needed
+            if new_description_file:
+                await new_description_file.save(round_dir / 'description.txt')
 
             # Update and move the round directory
             old_round_dir = tournament_dir / round_metadata['dir']
