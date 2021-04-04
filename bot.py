@@ -4,12 +4,14 @@
 import asyncio
 import os
 
+import discord
 from discord.ext import commands
 import schem
 
 from tournament import Tournament
 
 TOKEN = os.getenv('SCHEM_BOT_DISCORD_TOKEN')
+MAINTAINER_DISCORD_ID = os.getenv('SCHEM_BOT_MAINTAINER_DISCORD_ID')
 
 bot = commands.Bot(command_prefix='!',
                    description="SpaceChem-simulating bot."
@@ -27,6 +29,22 @@ async def on_command_error(ctx, error):
 
     print(f"{type(error).__name__}: {error}")
     await ctx.send(str(error))  # Probably bad practice but it makes the commands' code nice...
+
+@bot.command(name='about')
+async def about(ctx):
+    """Info about this bot."""
+    await ctx.send(f"""Hi! I'm a bot for hosting the annual SpaceChem tournament.
+To save weakling human tournament hosts from the effort of manually verifying every player submission, I accept Community Edition solution export files via private DM, and automatically validate them using a clean room implementation of the SpaceChem backend, which you can check out at <https://github.com/spacechem-community-developers/SChem>. This was created by Zig without access to the SC source code and has been tested reasonably thoroughly. It's expected that it's currently at full feature parity with SpaceChem, but 1 or 2 bugs may turn up during the tournament. If you find that it fails to correctly validate a solution that runs in SpaceChem, please DM <@{MAINTAINER_DISCORD_ID}>. If the bug can be demonstrated without spoiling your tournament solution to others, you can also directly open an issue in the SChem github project.
+
+To see all available bot functionality, DM me `!help` or `!help <specific-command>` (to send a DM, right click my name and select 'Message'). The main commands of interest:
+- !tournament-info - View info on the current tournament
+- !tournament-submit - Submit an attached Community Edition solution file
+- !tournament-submissions-list - View your submissions
+
+Please note that I will only respond to submission-related commands if sent in a DM; do not attempt to submit a solution file in a public channel, for obvious reasons.
+
+Finally, it hopefully goes without saying, but please do not deliberately DDOS me or submit an excessive number of non-scoring solutions. I'm just a small bot trying to make my way in the world with naught but a raspberry pi and limited SD card space!
+""", allowed_mentions=discord.AllowedMentions(users=False))  # Don't actually ping me
 
 @bot.command(name='run', aliases=['r', 'score', 'validate', 'check'])
 async def run(ctx):
