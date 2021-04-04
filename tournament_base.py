@@ -279,24 +279,32 @@ class BaseTournament(commands.Cog):
         return '\n'.join('  '.join(s.ljust(min_widths[i]) for i, s in enumerate(row)) for row in formatted_rows)
 
     @classmethod
-    def standings_str(cls, tournament_dir):
-        """Given a tournament's directory, return a string of the tournament standings"""
-        with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:
-            standings = json.load(f)
-        table = [[k, v] for k, v in standings['total'].items()]
-
+    def standings_dict_to_str(cls, tournament_dir, standings):
+        """Given a standings dict, return it formatted as a table string."""
         # Display each participant by nickname if possible, falling back to discord_tag if not
         # Awkward that it's stored only by discord tag, but nickname is not guaranteed to exist in the case of a team,
         # and storing a mix runs into issues with keeping them unique - if someone sets their nickname to someone else's
         # discord tag before that person has joined as a participant, we'd be in a mess.
         with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
             participants = json.load(f)
-        for row in table:
-            discord_tag = row[0]
+
+        def display_name(discord_tag):
             if discord_tag in participants and 'name' in participants[discord_tag]:
-                row[0] = participants[discord_tag]['name']
+                return participants[discord_tag]['name']
+            else:
+                return discord_tag
+
+        table = [[display_name(k), v] for k, v in standings['total'].items()]
 
         return cls.table_str(('#', 'Name', 'Score'), cls.sorted_and_ranked(table, desc=True))
+
+    @classmethod
+    def standings_str(cls, tournament_dir):
+        """Given a tournament's directory, return a string of the tournament standings"""
+        with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:
+            standings = json.load(f)
+
+        return cls.standings_dict_to_str(tournament_dir, standings)
 
     @staticmethod
     def tournament_announcement(tournament_dir, tournament_metadata):
@@ -560,16 +568,12 @@ class BaseTournament(commands.Cog):
         return msg_strings, attachments, standings_scores
 
     @staticmethod
-    def update_standings(tournament_dir, puzzle_name, standings_delta):
-        """Given a dict of player/team names to points delta, update the tournament standings."""
-        with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:
-            standings = json.load(f)
-
-        standings['rounds'][puzzle_name] = standings_delta
-
-        # Create a reverse nickname_or_team_name : discord_tag dict for ease of lookup
+    def name_to_discord_tag_dict(tournament_dir):
+        """Return a dict of player nicknames or team names to discord tags, for ease of lookup."""
         with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
             participants = json.load(f)
+
+        # Create a reverse nickname_or_team_name : discord_tag dict for ease of lookup
         name_to_discord_tags = {}
         for discord_tag, player_info in participants.items():
             if 'team' in player_info:
@@ -579,6 +583,13 @@ class BaseTournament(commands.Cog):
             else:
                 name_to_discord_tags[player_info['name']] = [discord_tag]
 
+        return name_to_discord_tags
+
+    @classmethod
+    def update_standings_dict(cls, standings, standings_delta, name_to_discord_tags):
+        """Given a standings dict, a dict of player/team names to points delta, and a dict mapping
+        player/team names to discord tags, update the standings dict with the individual players' points changes.
+        """
         # Add to the standings, ignoring 0 scores
         for name, points in standings_delta.items():
             if points != 0:
@@ -595,6 +606,15 @@ class BaseTournament(commands.Cog):
                     if discord_tag not in standings['total']:
                         standings['total'][discord_tag] = 0
                     standings['total'][discord_tag] += points
+
+    @classmethod
+    def update_standings(cls, tournament_dir, puzzle_name, standings_delta):
+        """Given a puzzle and dict of player/team names to points delta, update the tournament standings."""
+        with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:
+            standings = json.load(f)
+
+        standings['rounds'][puzzle_name] = standings_delta
+        cls.update_standings_dict(standings, standings_delta, cls.name_to_discord_tag_dict(tournament_dir))
 
         with open(tournament_dir / 'standings.json', 'w', encoding='utf-8') as f:
             json.dump(standings, f, ensure_ascii=False, indent=4)

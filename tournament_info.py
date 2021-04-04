@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import json
+
 import discord
 from discord.ext import commands
 
@@ -10,6 +12,8 @@ from utils import format_date
 
 class TournamentInfo(BaseTournament):
     """Class providing a tournament-info bot command."""
+
+    is_host = commands.check(is_tournament_host)
 
     @commands.command(name='tournament-info', aliases=['ti'])
     #@commands.dm_only()  # Prevent public channel spam and make sure TO can't accidentally leak current round results
@@ -90,3 +94,28 @@ class TournamentInfo(BaseTournament):
                     await ctx.send(msg_string)
                 else:
                     await ctx.send(msg_string, files=attachments)
+
+    @commands.command(name='tournament-standings-preview', aliases=['tsp', 'tournament-preview-standings', 'tps'])
+    @is_host
+    #@commands.dm_only()  # Make sure TO can't accidentally leak this
+    async def standings_preview(self, ctx):
+        """[TO-only] Preview the standings if all open rounds were tallied right now."""
+        tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
+
+        with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:
+            standings = json.load(f)
+
+        name_to_discord_tags = self.name_to_discord_tag_dict(tournament_dir)  # Reverse lookup dict needed for updates
+
+        # Tally the current results of each open puzzle and add them to the current standings
+        for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
+            if 'start_post' in round_metadata and 'end_post' not in round_metadata:
+                standings_delta = self.round_results_announcement_and_standings_change(tournament_dir,
+                                                                                       tournament_metadata,
+                                                                                       puzzle_name)[2]
+                self.update_standings_dict(standings, standings_delta, name_to_discord_tags)
+
+        # Create a standings table (in chunks under discord's char limit as needed)
+        for standings_msg in self.table_msgs(title_line="**Standings**",
+                                             table_text=self.standings_dict_to_str(tournament_dir, standings)):
+            await ctx.send(standings_msg)
