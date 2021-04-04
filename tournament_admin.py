@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime, timezone
 import json
 import shutil
+from typing import Union
 
 import discord
 from discord.ext import commands
@@ -352,7 +353,7 @@ class TournamentAdmin(BaseTournament):
     @commands.command(name='tournament-puzzle-add', aliases=['tpa', 'tournament-add-puzzle', 'tap'])
     @is_host
     #@commands.dm_only()
-    async def tournament_add_puzzle(self, ctx, round_name, metric, points: float, start, end=None):
+    async def tournament_add_puzzle(self, ctx, round_name, metric, points: Union[int, float], start, end=None):
         """Add a puzzle to the tournament.
 
         round_name: e.g. "Round 1" or "Bonus 1".
@@ -506,7 +507,7 @@ class TournamentAdmin(BaseTournament):
             parser = argparse.ArgumentParser(exit_on_error=False)
             parser.add_argument('--round_name')
             parser.add_argument('--metric')
-            parser.add_argument('--points', type=float)
+            parser.add_argument('--points', type=lambda s: int(s) if float(s).is_integer() else float(s))
             parser.add_argument('--start', '--start_date')
             parser.add_argument('--end', '--end_date')
 
@@ -536,7 +537,7 @@ class TournamentAdmin(BaseTournament):
 
             # Check that only changed fields were specified
             for k, v in args_dict.items():
-                if v and v == round_metadata[k]:
+                if v is not None and v == round_metadata[k]:
                     raise ValueError(f"{k} was already `{v}`, did you mean to update it?")
 
             assert not args.start or 'start_post' not in round_metadata, "Cannot update start date; puzzle is already open!"
