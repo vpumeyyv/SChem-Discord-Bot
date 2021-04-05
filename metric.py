@@ -9,7 +9,7 @@ import math
 import operator as op
 
 from schem.waldo import InstructionType
-from schem.components import Reactor
+from schem.components import Reactor, Recycler
 
 # Operators allowed in puzzle metric strings
 METRIC_OPS = {ast.Pow: op.pow, ast.USub: op.neg, ast.Mult: op.mul, ast.Div: op.truediv, ast.Add: op.add, ast.Sub: op.sub,
@@ -22,10 +22,17 @@ METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                     'waldos': lambda soln: waldos(soln),
                     'waldopath': lambda soln: waldopath(soln),
                     'bonders': lambda soln: used_bonders(soln),
+                    # Instruction counts
                     'arrows': lambda soln: num_arrows(soln),
-                    'flip_flops': lambda soln: num_instrs_of_type(soln, InstructionType.FLIP_FLOP),
-                    'sensors': lambda soln: num_instrs_of_type(soln, InstructionType.SENSE),
-                    'syncs': lambda soln: num_instrs_of_type(soln, InstructionType.SYNC)}
+                    **{i.name.lower() + ('s' if not i.name.endswith('S') else 'es'):  # 'bond_pluses'
+                       lambda soln: num_instrs_of_type(soln, i)
+                       for i in InstructionType
+                       # Exclude the weird ones and inputs/outputs since they should be reserved for molecules
+                       if i not in (InstructionType.START, InstructionType.INPUT, InstructionType.OUTPUT,
+                                    InstructionType.PAUSE)},
+                    'bonds': lambda soln: num_instrs_of_type(soln, InstructionType.BOND_PLUS)
+                                          + num_instrs_of_type(soln, InstructionType.BOND_MINUS),
+                    'recycler_pipes': lambda soln: recycler_pipes(soln)}
                     # TODO: 'outputs': completed_outputs
                     #       requires modifications to tournament validator to accept solutions without an expected
                     #       score if the metric contains 'outputs', and to eval the metric even if the solution crashes
@@ -333,3 +340,12 @@ def num_instrs_of_type(soln, instr_type):
 def completed_outputs(soln):
     """Given a Solution object that has run to completion or error, return the number of completed output molecules."""
     return sum(output.current_count for output in soln.outputs)
+
+
+def recycler_pipes(soln):
+    """Return the number of pipes in the solution that attach to a recycler."""
+    return sum(1
+               for component in soln.components
+               if isinstance(component, Recycler)
+               for pipe in component.in_pipes
+               if pipe is not None)
