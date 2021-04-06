@@ -11,11 +11,18 @@ import schem
 from tournament import Tournament
 
 TOKEN = os.getenv('SCHEM_BOT_DISCORD_TOKEN')
-MAINTAINER_DISCORD_ID = os.getenv('SCHEM_BOT_MAINTAINER_DISCORD_ID')
+MAINTAINER_DISCORD_ID = int(os.getenv('SCHEM_BOT_MAINTAINER_DISCORD_ID'))
+ANNOUNCEMENTS_CHANNEL_ID = int(os.getenv('SCHEM_BOT_ANNOUNCEMENTS_CHANNEL_ID'))
 
 bot = commands.Bot(command_prefix='!',
                    description="SpaceChem-simulating bot."
                                + "\nRuns/validates Community-Edition-exported solution files, excluding legacy bugs.")
+
+@bot.before_invoke
+async def is_valid_ctx(ctx):
+    """Ignore commands not sent via DM or in the bot's designated channel."""
+    if not (isinstance(ctx.channel, discord.channel.DMChannel) or ctx.channel.id == ANNOUNCEMENTS_CHANNEL_ID):
+        raise commands.ChannelNotReadable(ctx.channel)
 
 @bot.event
 async def on_ready():
@@ -24,7 +31,7 @@ async def on_ready():
 @bot.event
 async def on_command_error(ctx, error):
     """Default bot command error handler."""
-    if isinstance(error, (commands.CommandNotFound, commands.CheckFailure)):
+    if isinstance(error, (commands.CommandNotFound, commands.CheckFailure, commands.ChannelNotReadable)):
         return  # Avoid logging errors when users put in invalid commands
 
     print(f"{type(error).__name__}: {error}")
