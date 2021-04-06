@@ -17,7 +17,6 @@ from utils import split_by_char_limit, format_date, wait_until
 
 load_dotenv()
 
-GUILD_ID = int(os.getenv('SCHEM_BOT_GUILD_ID'))
 ANNOUNCEMENTS_CHANNEL_ID = int(os.getenv('SCHEM_BOT_ANNOUNCEMENTS_CHANNEL_ID'))
 CORANAC_SITE = "https://www.coranac.com/spacechem/mission-viewer"
 
