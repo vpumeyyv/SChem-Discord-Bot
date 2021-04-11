@@ -445,6 +445,8 @@ class TournamentAdmin(BaseTournament):
                 await description_file.save(round_dir / 'description.txt')
             (round_dir / 'solutions.txt').touch()
             (round_dir / 'solutions_fun.txt').touch()
+            with open(round_dir / 'submissions_history.json', 'w', encoding='utf-8') as f:
+                json.dump({}, f, ensure_ascii=False, indent=4)
 
             with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
                 json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)

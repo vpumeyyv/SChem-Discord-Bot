@@ -3,6 +3,7 @@
 
 import asyncio
 from datetime import datetime, timedelta
+import io
 import json
 import os
 from pathlib import Path
@@ -100,6 +101,7 @@ class BaseTournament(commands.Cog):
     #             puzzleB.puzzle
     #             solutions.txt
     #             solutions_fun.txt
+    #             submissions_history.json  -> author_or_team: [[time, score, metric, soln_name, comment], ...]
     #         round2_puzzleC/
     #         ...
     #     slugified_tournament_name_2/
@@ -266,7 +268,7 @@ class BaseTournament(commands.Cog):
         formatted_rows = [headers] + [[x if isinstance(x, str) else str(round(x, 3)) for x in row]
                                       for row in rows]
 
-        # truncate values over max col width
+        # Truncate values over max col width
         for row in formatted_rows:
             for i in range(len(row)):
                 if len(row[i]) > max_col_width:
@@ -275,7 +277,7 @@ class BaseTournament(commands.Cog):
         # Get the minimum width of each column
         min_widths = [max(map(len, col)) for col in zip(*formatted_rows)]  # Sorry future reader
 
-        return '\n'.join('  '.join(s.ljust(min_widths[i]) for i, s in enumerate(row)) for row in formatted_rows)
+        return '\n'.join('  '.join(s.ljust(min_width) for min_width, s in zip(min_widths, row)) for row in formatted_rows)
 
     @classmethod
     def standings_dict_to_str(cls, tournament_dir, standings):
@@ -543,12 +545,7 @@ class BaseTournament(commands.Cog):
         msg_strings = self.table_msgs(title_line=f"**{round_metadata['round_name']} ({puzzle_name}) Results**",
                                       table_text=self.table_str(col_headers, results))
 
-        # TODO: Add current overall tournament standings?
-
-        # TODO: Also attach blurbs.txt
-
         # Add fun solutions if any
-        # TODO: Add a second table listing the fun solutions by name, and excluding tournament points columns
         fun_solns_file = round_dir / 'solutions_fun.txt'
         with open(fun_solns_file, 'r', encoding='utf-8') as f:
             fun_solns_str = f.read().strip()
@@ -563,6 +560,25 @@ class BaseTournament(commands.Cog):
                                                table_text=self.table_str(fun_col_headers, fun_table_rows)))
 
             attachments.append(discord.File(str(fun_solns_file), filename=fun_solns_file.name))
+
+        # Convert the submission history to a more readable text file and attach it
+        with open(round_dir / 'submissions_history.json', 'r', encoding='utf-8') as f:
+            submissions_history = json.load(f)
+
+        submissions_history_str = ""
+        for author, submissions in submissions_history.items():
+            for submit_time, score, metric, soln_name, comment in submissions:
+                submission_str = f"{author}: {format_date(submit_time)} - {score} - {round(metric, 3)}"
+                if soln_name is not None:
+                    submission_str += f' "{soln_name}"'
+                if comment is not None:
+                    submission_str += f' {comment}'
+                submissions_history_str += submission_str + '\n'
+
+        with io.StringIO() as f:
+            f.write(submissions_history_str)
+            f.seek(0)  # Reset file io position
+            attachments.append(discord.File(f, filename='submissions_history.txt'))
 
         return msg_strings, attachments, standings_scores
 

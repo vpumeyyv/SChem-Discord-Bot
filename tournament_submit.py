@@ -49,7 +49,7 @@ class TournamentSubmit(BaseTournament):
 
         if submission_msg.edited_at is not None:
             # Cover any possible late-submission exploits if we ever allow bot to respond to edits
-            msg_time = submission_msg.edit_at.replace(tzinfo=timezone.utc)
+            msg_time = submission_msg.edited_at.replace(tzinfo=timezone.utc)
         else:
             msg_time = submission_msg.created_at.replace(tzinfo=timezone.utc)
 
@@ -100,12 +100,19 @@ class TournamentSubmit(BaseTournament):
 
         return participants[discord_tag]['team'] if 'team' in participants[discord_tag] else None
 
-    # TODO: Accept blurb: https://discordpy.readthedocs.io/en/latest/ext/commands/commands.html#keyword-only-arguments
     @commands.command(name='tournament-submit', aliases=['ts'])
     #@commands.dm_only()  # TODO: Give the bot permission to delete !tournament-submit messages from public channels
     #       since someone will inevitably forget to use DMs
-    async def tournament_submit(self, ctx):
-        """Submit the attached solution file to the tournament."""
+    async def tournament_submit(self, ctx, *, comment=""):
+        """Submit the attached solution file to the tournament.
+
+        [Optional] comment: Comment to go with the solution. When the puzzle results
+                            are announced, your submission history will be publicly
+                            published along with any of these comments.
+        [Attachment] *: A text file containing a single Community Edition-exported
+                        solution string. To create this, open the solution then click
+                        Export from the CE save menu (hamburger button below Undo).
+        """
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata()
 
         assert len(ctx.message.attachments) == 1, "Expected one attached solution file!"
@@ -196,7 +203,26 @@ class TournamentSubmit(BaseTournament):
                         # Make sure not to write windows newlines or python will double the carriage returns
                         f.write('\n'.join(new_soln_strs))
 
-                    # TODO: Update submissions_history.txt with time, name, score, and blurb
+                    # Write the submission time, score, metric, and any comment to this author's submission history
+                    with open(round_dir / 'submissions_history.json', 'r', encoding='utf-8') as f:
+                        submissions_history = json.load(f)
+
+                    if author not in submissions_history:
+                        submissions_history[author] = []
+                        # Sort by author name
+                        submissions_history = {k: submissions_history[k] for k in sorted(submissions_history)}
+
+                    submit_time = (ctx.message.created_at if ctx.message.edited_at is None
+                                   else ctx.message.edited_at).replace(tzinfo=timezone.utc)
+
+                    submissions_history[author].append((submit_time.isoformat(),
+                                                        str(solution.expected_score),
+                                                        soln_metric_score,
+                                                        solution.name if solution.name else None,
+                                                        comment if comment else None))
+
+                    with open(round_dir / 'submissions_history.json', 'w', encoding='utf-8') as f:
+                        json.dump(submissions_history, f, ensure_ascii=False, indent=4)
             except Exception as e:
                 reaction = '❌'
                 print(f"{type(e).__name__}: {e}")
@@ -208,7 +234,6 @@ class TournamentSubmit(BaseTournament):
 
         await ctx.message.add_reaction(reaction)
 
-    # TODO: Accept blurb: https://discordpy.readthedocs.io/en/latest/ext/commands/commands.html#keyword-only-arguments
     # TODO: Limit each player to 5 non-scoring solutions
     @commands.command(name='tournament-submit-fun', aliases=['tsf', 'tournament-submit-non-scoring', 'tsns'])
     #@commands.dm_only()  # TODO: Give the bot permission to delete !tournament-submit messages from public channels
