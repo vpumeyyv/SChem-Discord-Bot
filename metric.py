@@ -25,7 +25,7 @@ METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                     # Instruction counts
                     'arrows': lambda soln: num_arrows(soln),
                     **{i.name.lower() + ('s' if not i.name.endswith('S') else 'es'):  # 'bond_pluses'
-                       lambda soln: num_instrs_of_type(soln, i)
+                       lambda soln, instr=i: num_instrs_of_type(soln, instr)  # Default lambda arg to avoid scope issues
                        for i in InstructionType
                        # Exclude the weird ones and inputs/outputs since they should be reserved for molecules
                        if i not in (InstructionType.START, InstructionType.INPUT, InstructionType.OUTPUT,
