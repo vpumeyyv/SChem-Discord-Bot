@@ -162,7 +162,7 @@ class TournamentTeams(BaseTournament):
 
     @commands.command(name='tournament-team-remove', aliases=['ttr', 'tournament-remove-team', 'trt'])
     @is_host
-    async def tournament_remove_team(self, ctx, team_name, from_round=None):
+    async def tournament_remove_team(self, ctx, team_name, from_round=None, only=None):
         """Dissolve a tournament team from the given round onwards.
 
         team_name: The name of the team to remove.
@@ -170,6 +170,9 @@ class TournamentTeams(BaseTournament):
                     all rounds with start dates on or after that round's start date.
                     If not provided, defaults to all rounds starting from the current
                     datetime (i.e. not including any already-open rounds).
+        only: If provided, only remove from from_round and not all subsequent rounds.
+              It doesn't matter what string you pass here, e.g. 'only'.
+        E.g. !tournament-remove-team "A and B" "Round 3" only
         """
         async with self.tournament_metadata_write_lock:
             tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
@@ -177,13 +180,17 @@ class TournamentTeams(BaseTournament):
             if from_round is None:
                 from_date = datetime.now(timezone.utc).isoformat()
             else:
-                puzzle_name = self.get_puzzle_name(tournament_metadata, from_round, is_host=True, missing_ok=False)
-                from_date = tournament_metadata['rounds'][puzzle_name]['start']
+                from_puzzle_name = self.get_puzzle_name(tournament_metadata, from_round, is_host=True, missing_ok=False)
+                from_date = tournament_metadata['rounds'][from_puzzle_name]['start']
 
             # Update each relevant round
             updated_rounds = []
             skipped = False
             for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
+                # Ignore all rounds except specified round if 'only' appended
+                if only and puzzle_name != from_puzzle_name:
+                    continue
+
                 # Ignore prior rounds and closed rounds
                 if round_metadata['start'] < from_date or 'end_post' in round_metadata:
                     continue
