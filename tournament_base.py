@@ -36,7 +36,7 @@ def is_tournament_host(ctx):
         return False
 
     with open(hosts_json_file, encoding='utf-8') as f:
-        return str(ctx.message.author) in json.load(f)['hosts']
+        return ctx.message.author.id in json.load(f)['hosts']
 
 
 class PuzzleSubmissionsLock:

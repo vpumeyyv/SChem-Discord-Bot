@@ -28,7 +28,7 @@ class TournamentAdmin(BaseTournament):
     is_host = commands.check(is_tournament_host)
 
     def hosts(self):
-        """Return a set of the users with tournament-hosting permissions."""
+        """Return a set of the discord user IDs with tournament-hosting permissions."""
         hosts_json_file = self.TOURNAMENTS_DIR / 'hosts.json'
         if not hosts_json_file.exists():
             return set()
@@ -38,44 +38,43 @@ class TournamentAdmin(BaseTournament):
 
     # Note: Command docstrings should be limited to ~80 char lines to avoid ugly wraps in any reasonably-sized window
     @commands.command(name='tournament-hosts', aliases=['th', 'tournament-host-list', 'thl'])
-    @is_host
     async def hosts_cmd(self, ctx):
-        """List all tournament hosts."""
-        await ctx.send(f"The following users have tournament-hosting permissions: {', '.join(self.hosts())}")
+        """List all tournament hosts.
+
+        Note: Does not actually ping them.
+        """
+        await ctx.send(f"The following users have tournament-hosting permissions: {', '.join(f'<@{_id}>' for _id in self.hosts())}",
+                       allowed_mentions=discord.AllowedMentions(users=False))  # Don't actually ping them
 
     @commands.command(name='tournament-host-add', aliases=['tournament-add-host', 'add-tournament-host'])
     @commands.is_owner()
     async def add_tournament_host(self, ctx, user: discord.User):
         """Give someone tournament-hosting permissions."""
-        discord_tag = str(user)  # e.g. <username>#1234. Guaranteed to be unique
-
         self.TOURNAMENTS_DIR.mkdir(exist_ok=True)
 
         hosts = self.hosts()
-        if discord_tag in hosts:
+        if user.id in hosts:
             raise ValueError("Given user is already a tournament host")
-        hosts.add(discord_tag)
+        hosts.add(user.id)
 
         with open(self.TOURNAMENTS_DIR / 'hosts.json', 'w', encoding='utf-8') as f:
             json.dump({'hosts': list(hosts)}, f, ensure_ascii=False, indent=4)
 
-        await ctx.send(f"{discord_tag} added to tournament hosts.")
+        await ctx.send(f"{user} added to tournament hosts.")
 
     @commands.command(name='tournament-host-remove', aliases=['tournament-remove-host', 'remove-tournament-host'])
     @commands.is_owner()
     async def remove_tournament_host(self, ctx, user: discord.User):
         """Remove someone's tournament-hosting permissions."""
-        discord_tag = str(user)  # e.g. <username>#1234. Guaranteed to be unique
-
         hosts = self.hosts()
-        if discord_tag not in hosts:
+        if user.id not in hosts:
             raise ValueError("Given user is not a tournament host")
-        hosts.remove(discord_tag)
+        hosts.remove(user.id)
 
         with open(self.TOURNAMENTS_DIR / 'hosts.json', 'w', encoding='utf-8') as f:
             json.dump({'hosts': list(hosts)}, f, ensure_ascii=False, indent=4)
 
-        await ctx.send(f"{discord_tag} removed from tournament hosts.")
+        await ctx.send(f"{user} removed from tournament hosts.")
 
     @commands.command(name='tournament-create', aliases=['tc'])
     @is_host
