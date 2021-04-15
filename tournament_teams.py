@@ -158,7 +158,7 @@ class TournamentTeams(BaseTournament):
         if updated_rounds:
             await ctx.send(f"Created team `{team_name}` in {', '.join(updated_rounds)}")
         elif not skipped:
-            await ctx.send(f"No editable round  start in the future; specify a starting round to edit already-open ones.")
+            await ctx.send("No rounds start in the future; specify a starting round to edit already-open ones.")
 
     @commands.command(name='tournament-team-remove', aliases=['ttr', 'tournament-remove-team', 'trt'])
     @is_host
@@ -235,4 +235,4 @@ class TournamentTeams(BaseTournament):
         if updated_rounds:
             await ctx.send(f"Removed team `{team_name}` from {', '.join(updated_rounds)}")
         elif not skipped:
-            await ctx.send(f"No editable rounds start in the future; specify a starting round to edit already-open ones.")
+            await ctx.send("No rounds start in the future; specify a starting round to edit already-open ones.")
