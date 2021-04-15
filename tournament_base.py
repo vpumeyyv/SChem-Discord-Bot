@@ -26,6 +26,11 @@ CORANAC_SITE = "https://www.coranac.com/spacechem/mission-viewer"
 # Unfortunately can't be part of the Tournament cog since command.check doesn't pass self/cls
 def is_tournament_host(ctx):
     """Check whether the given user has tournament-hosting permissions."""
+    # Automatically consider any messages sent in a non-DM channel to be potentially public, and therefore
+    # treat them as non-host
+    if ctx.message.guild is not None:  # Comment this out for easier collaborative debugging
+        return False
+
     hosts_json_file = BaseTournament.TOURNAMENTS_DIR / 'hosts.json'
     if not hosts_json_file.exists():
         return False

@@ -45,7 +45,6 @@ class TournamentAdmin(BaseTournament):
 
     @commands.command(name='tournament-host-add', aliases=['tournament-add-host', 'add-tournament-host'])
     @commands.is_owner()
-    #@commands.dm_only()
     async def add_tournament_host(self, ctx, user: discord.User):
         """Give someone tournament-hosting permissions."""
         discord_tag = str(user)  # e.g. <username>#1234. Guaranteed to be unique
@@ -64,7 +63,6 @@ class TournamentAdmin(BaseTournament):
 
     @commands.command(name='tournament-host-remove', aliases=['tournament-remove-host', 'remove-tournament-host'])
     @commands.is_owner()
-    #@commands.dm_only()
     async def remove_tournament_host(self, ctx, user: discord.User):
         """Remove someone's tournament-hosting permissions."""
         discord_tag = str(user)  # e.g. <username>#1234. Guaranteed to be unique
@@ -81,7 +79,6 @@ class TournamentAdmin(BaseTournament):
 
     @commands.command(name='tournament-create', aliases=['tc'])
     @is_host
-    #@commands.dm_only()
     async def tournament_create(self, ctx, name, start, end, metametric='best_metric / your_metric'):
         """Create a tournament.
 
@@ -157,7 +154,6 @@ class TournamentAdmin(BaseTournament):
 
     @commands.command(name='tournament-update', aliases=['tournament-edit'])
     @is_host
-    #@commands.dm_only()
     async def tournament_update(self, ctx, *update_fields):
         """Update the current/pending tournament.
 
@@ -352,7 +348,6 @@ class TournamentAdmin(BaseTournament):
     # TODO: max_cycles
     @commands.command(name='tournament-puzzle-add', aliases=['tpa', 'tournament-add-puzzle', 'tap'])
     @is_host
-    #@commands.dm_only()
     async def tournament_add_puzzle(self, ctx, round_name, metric, points: Union[int, float], start, end=None):
         """Add a puzzle to the tournament.
 
@@ -474,7 +469,6 @@ class TournamentAdmin(BaseTournament):
     @commands.command(name='tournament-puzzle-update', aliases=['tournament-puzzle-edit', 'tournament-update-puzzle',
                                                                 'tournament-edit-puzzle'])
     @is_host
-    #@commands.dm_only()
     async def update_puzzle(self, ctx, round_or_puzzle_name, *update_fields):  # TODO: public_explanation_blurb
         """Update the specified puzzle.
 
@@ -822,7 +816,6 @@ class TournamentAdmin(BaseTournament):
 
     @commands.command(name='tournament-puzzle-delete', aliases=['tournament-delete-puzzle'])
     @is_host
-    #@commands.dm_only()
     async def delete_puzzle(self, ctx, *, round_or_puzzle_name):
         """Delete a round/puzzle.
 

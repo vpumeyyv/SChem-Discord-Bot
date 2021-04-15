@@ -108,9 +108,9 @@ class TournamentSubmit(BaseTournament):
 
         return None
 
-    @commands.command(name='tournament-submit', aliases=['ts'])
-    #@commands.dm_only()  # TODO: Give the bot permission to delete !tournament-submit messages from public channels
+    # TODO: Give the bot permission to delete !tournament-submit messages from public channels
     #       since someone will inevitably forget to use DMs
+    @commands.command(name='tournament-submit', aliases=['ts'])
     async def tournament_submit(self, ctx, *, comment=""):
         """Submit the attached solution file to the tournament.
 
@@ -243,9 +243,9 @@ class TournamentSubmit(BaseTournament):
         await ctx.message.add_reaction(reaction)
 
     # TODO: Limit each player to 5 non-scoring solutions
-    @commands.command(name='tournament-submit-fun', aliases=['tsf', 'tournament-submit-non-scoring', 'tsns'])
-    #@commands.dm_only()  # TODO: Give the bot permission to delete !tournament-submit messages from public channels
+    # TODO: Give the bot permission to delete !tournament-submit messages from public channels
     #       since someone will inevitably forget to use DMs
+    @commands.command(name='tournament-submit-fun', aliases=['tsf', 'tournament-submit-non-scoring', 'tsns'])
     async def tournament_submit_fun(self, ctx):
         """Submit the attached *non-scoring* solution file to the tournament.
 
@@ -324,7 +324,7 @@ class TournamentSubmit(BaseTournament):
     @commands.command(name='tournament-submissions-list', aliases=['tsl',
                                                                    'tournament-submissions',
                                                                    'tournament-list-submissions', 'tls'])
-    #@commands.dm_only()  # Prevent public channel spam and make sure TO can't accidentally leak current round results
+    @commands.dm_only()
     async def tournament_list_submissions(self, ctx, *, round_or_puzzle_name=None):
         """List your puzzle submissions.
 
@@ -399,16 +399,18 @@ class TournamentSubmit(BaseTournament):
         else:
             await ctx.send(reply.strip())  # Quick hack to remove newline prefix
 
-    @commands.command(name='tournament-submission-fun-remove', aliases=['tournament-submission-non-scoring-remove',
+    @commands.command(name='tournament-submission-fun-remove', aliases=['tsfr',
+                                                                        'tournament-submission-non-scoring-remove',
                                                                         'tournament-remove-fun-submission',
                                                                         'tournament-remove-non-scoring-submission'])
-    #@commands.dm_only()  # Prevent public channel spam and make sure TO can't accidentally leak current round results
+    @commands.dm_only()
     async def tournament_remove_fun_submission(self, ctx, round_or_puzzle_name, *, soln_name=None):
         """Remove a non-scoring submission to the given round/puzzle."""
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=False)
         puzzle_name = self.get_puzzle_name(tournament_metadata, round_or_puzzle_name, is_host=False, missing_ok=False)
         round_metadata = tournament_metadata['rounds'][puzzle_name]
         round_dir = tournament_dir / round_metadata['dir']
+
         nickname = self.get_player_name(tournament_dir, ctx.message.author)
         team_name = self.get_team_name(round_dir, ctx.message.author)
         submit_name = team_name if team_name is not None else nickname

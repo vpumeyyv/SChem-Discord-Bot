@@ -20,8 +20,9 @@ class TournamentTeams(BaseTournament):
     @is_host
     async def tournament_teams(self, ctx, *, round_or_puzzle_name):
         """List all teams formed for the specified puzzle or round name."""
-        tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
-        puzzle_name = self.get_puzzle_name(tournament_metadata, round_or_puzzle_name, is_host=True, missing_ok=False)
+        is_host = is_tournament_host(ctx)
+        tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=is_host)
+        puzzle_name = self.get_puzzle_name(tournament_metadata, round_or_puzzle_name, is_host=is_host, missing_ok=False)
         round_metadata = tournament_metadata['rounds'][puzzle_name]
         round_dir = tournament_dir / round_metadata['dir']
 

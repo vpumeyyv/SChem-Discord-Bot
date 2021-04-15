@@ -17,7 +17,7 @@ class TournamentInfo(BaseTournament):
     is_host = commands.check(is_tournament_host)
 
     @commands.command(name='tournament-info', aliases=['ti'])
-    #@commands.dm_only()  # Prevent public channel spam and make sure TO can't accidentally leak current round results
+    @commands.dm_only()  # Prevent public channel spam
     async def tournament_info(self, ctx, *, round_or_puzzle_name=None):
         """Info on the tournament or specified round/puzzle.
 
@@ -98,7 +98,6 @@ class TournamentInfo(BaseTournament):
 
     @commands.command(name='tournament-standings-preview', aliases=['tsp', 'tournament-preview-standings', 'tps'])
     @is_host
-    #@commands.dm_only()  # Make sure TO can't accidentally leak this
     async def standings_preview(self, ctx):
         """[TO-only] Preview the standings if all open rounds were tallied right now."""
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
