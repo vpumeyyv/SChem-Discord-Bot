@@ -3,6 +3,7 @@
 
 from datetime import datetime, timezone
 import json
+from pathlib import Path
 
 import discord
 from discord.ext import commands
@@ -40,6 +41,22 @@ class TournamentTeams(BaseTournament):
                             + ', '.join(f"`{participants[tag]['name']}`" if 'name' in participants[tag] else tag
                                         for tag in tags)
                             for team_name, tags in teams.items()))
+
+    def remove_submissions_by(self, round_dir: Path, puzzle_name: str, authors: set):
+        """Remove all submissions from the given round that match any of the given authors."""
+        with self.puzzle_submission_locks[puzzle_name]:
+            for solns_file in (round_dir / 'solutions.txt', round_dir / 'solutions_fun.txt'):
+                with open(solns_file, encoding='utf-8') as f:
+                    solns_str = f.read()
+
+                new_soln_strs = []
+                for soln_str in schem.Solution.split_solutions(solns_str):
+                    _, author, _, _ = schem.Solution.parse_metadata(soln_str)
+                    if author not in authors:
+                        new_soln_strs.append(soln_str)
+
+                with open(solns_file, 'w', encoding='utf-8') as f:
+                    f.write('\n'.join(new_soln_strs))
 
     @commands.command(name='tournament-team-add', aliases=['tta', 'tournament-add-team', 'tat',
                                                            'tournament-team-create', 'tournament-create-team'])
@@ -91,7 +108,7 @@ class TournamentTeams(BaseTournament):
                 with open(round_dir / 'teams.json', encoding='utf-8') as f:
                     teams = json.load(f)
 
-                remove_submissions_by = set()  # Nicknames or team names of players being put in the new team
+                submit_names_to_remove = set()  # Nicknames or team names of players being put in the new team
 
                 # Check players' prior teams and get names of players/teams whose submissions will need to be removed
                 # Construct a reverse discord_tag-to-team dict to facilitate this
@@ -106,19 +123,18 @@ class TournamentTeams(BaseTournament):
                     if discord_tag not in tag_to_team:
                         # If this participant had no prior team, just remove their submissions if any
                         if 'name' in participants[discord_tag]:
-                            remove_submissions_by.add(participants[discord_tag]['name'])
+                            submit_names_to_remove.add(participants[discord_tag]['name'])
                     elif tag_to_team[discord_tag] != team_name:
                         other_team_name = tag_to_team[discord_tag]
                         teams[other_team_name].remove(discord_tag)  # Remove them from their old team
 
                         # If this was the last member of the other team, remove the other team's submissions
                         if not teams[other_team_name]:
-                            remove_submissions_by.add(other_team_name)
+                            submit_names_to_remove.add(other_team_name)
 
                 # Add the new team
                 teams[team_name] = [str(player) for player in players]
 
-                # If the round is open, remove existing submissions by the merged players/teams
                 if 'start_post' in round_metadata:
                     # If the round is already open, summarize the changes and ask for confirmation
                     confirm_msg = await ctx.send(
@@ -133,23 +149,9 @@ class TournamentTeams(BaseTournament):
                         skipped = True
                         continue
 
-                    # Remove existing submissions by the merged players/teams
-                    # Fun submissions can be left alone as attribution is less important there and players can
-                    # add/remove them as they see fit
-                    with self.puzzle_submission_locks[puzzle_name]:
-                        with open(round_dir / 'solutions.txt', encoding='utf-8') as f:
-                            solns_str = f.read()
+                    self.remove_submissions_by(round_dir, puzzle_name, submit_names_to_remove)
 
-                        new_soln_strs = []
-                        for soln_str in schem.Solution.split_solutions(solns_str):
-                            _, author, _, _ = schem.Solution.parse_metadata(soln_str)
-                            if author not in remove_submissions_by:
-                                new_soln_strs.append(soln_str)
-
-                        with open(round_dir / 'solutions.txt', 'w', encoding='utf-8') as f:
-                            f.write('\n'.join(new_soln_strs))
-
-                # Update this round's teams listing
+                # Write the teams change
                 with open(round_dir / 'teams.json', 'w', encoding='utf-8') as f:
                     json.dump(teams, f, ensure_ascii=False, indent=4)
 
@@ -217,23 +219,9 @@ class TournamentTeams(BaseTournament):
                         skipped = True
                         continue
 
-                    # Remove the team's existing submissions
-                    # Fun submissions can be left alone as attribution is less important there and players can
-                    # add/remove them as they see fit
-                    with self.puzzle_submission_locks[puzzle_name]:
-                        with open(round_dir / 'solutions.txt', encoding='utf-8') as f:
-                            solns_str = f.read()
+                    self.remove_submissions_by(round_dir, puzzle_name, {team_name})
 
-                        new_soln_strs = []
-                        for soln_str in schem.Solution.split_solutions(solns_str):
-                            _, author, _, _ = schem.Solution.parse_metadata(soln_str)
-                            if author != team_name:
-                                new_soln_strs.append(soln_str)
-
-                        with open(round_dir / 'solutions.txt', 'w', encoding='utf-8') as f:
-                            f.write('\n'.join(new_soln_strs))
-
-                # Update this round's teams listing
+                # Write the teams change
                 with open(round_dir / 'teams.json', 'w', encoding='utf-8') as f:
                     json.dump(teams, f, ensure_ascii=False, indent=4)
 
