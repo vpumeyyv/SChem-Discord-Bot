@@ -111,6 +111,7 @@ class TournamentSubmit(BaseTournament):
     # TODO: Give the bot permission to delete !tournament-submit messages from public channels
     #       since someone will inevitably forget to use DMs
     @commands.command(name='tournament-submit', aliases=['ts'])
+    @commands.dm_only()
     async def tournament_submit(self, ctx, *, comment=""):
         """Submit the attached solution file to the tournament.
 
@@ -246,6 +247,7 @@ class TournamentSubmit(BaseTournament):
     # TODO: Give the bot permission to delete !tournament-submit messages from public channels
     #       since someone will inevitably forget to use DMs
     @commands.command(name='tournament-submit-fun', aliases=['tsf', 'tournament-submit-non-scoring', 'tsns'])
+    @commands.dm_only()
     async def tournament_submit_fun(self, ctx):
         """Submit the attached *non-scoring* solution file to the tournament.
 
