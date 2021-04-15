@@ -59,20 +59,20 @@ class TournamentSubmit(BaseTournament):
             raise Exception(f"Submissions for `{puzzle_name}` have closed.")
 
     @staticmethod
-    def add_or_check_player(tournament_dir: Path, user: discord.User, nickname: str):
+    def add_or_check_player(round_dir: Path, user: discord.User, nickname: str):
         """Given a discord user and nickname, register this participant or verify they match the originally-registered
         pairing. Return their team name if any or else None.
         """
-        with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
+        with open(round_dir.parent / 'participants.json', 'r', encoding='utf-8') as f:
             participants = json.load(f)
+        with open(round_dir / 'teams.json', encoding='utf-8') as f:
+            teams = json.load(f)
 
         discord_tag = str(user)
 
-        # If the player is part of a team and submitted under their team name, do nothing
-        if (discord_tag in participants
-                and 'team' in participants[discord_tag]
-                and nickname == participants[discord_tag]['team']):
-            return participants[discord_tag]['team']
+        # If the player is part of a team and submitted under their team name, just return their team name
+        if nickname in teams and discord_tag in teams[nickname]:
+            return nickname
 
         # If they aren't submitting under a team name, check if the nickname has already been set or must be set now
         if discord_tag in participants and 'name' in participants[discord_tag]:
@@ -82,23 +82,31 @@ class TournamentSubmit(BaseTournament):
                 raise ValueError(f"Given author name `{nickname}` doesn't match your prior submissions':"
                                  + f" `{participants[discord_tag]['name']}`; please talk to the"
                                  + " tournament host if you would like a name change.")
+
+            # If the above teams check didn't match and the nickname is registered, bad shit is happening
+            assert nickname not in teams, "It looks like a team with your name exists, please yell at Zig"
         else:
             # Set nickname for the first time
-            if any(('name' in d and nickname == d['name'])
-                   or ('team' in d and nickname == d['team'])
-                   for d in participants.values()):
-                raise PermissionError(f"Solution author name `{nickname}` is already in use by another participant,"
+            # TODO: Add teams listing to tournament metadata for checking for conflicts with other rounds' teams
+            if nickname in teams or any('name' in d and nickname == d['name'] for d in participants.values()):
+                raise PermissionError(f"Solution author name `{nickname}` is already in use by another player or team,"
                                       + " please choose another (or login to the correct discord account).")
 
             if discord_tag not in participants:
                 participants[discord_tag] = {'id': user.id}
 
+            # Separate from the above since if added by a team, a player may already exist but not have had a name
             participants[discord_tag]['name'] = nickname
 
-            with open(tournament_dir / 'participants.json', 'w', encoding='utf-8') as f:
+            with open(round_dir.parent / 'participants.json', 'w', encoding='utf-8') as f:
                 json.dump(participants, f, ensure_ascii=False, indent=4)
 
-        return participants[discord_tag]['team'] if 'team' in participants[discord_tag] else None
+        # After adding nickname if possible, check if this user is in any team and return their team name if so
+        for team_name, tags in teams.items():
+            if discord_tag in tags:
+                return team_name
+
+        return None
 
     @commands.command(name='tournament-submit', aliases=['ts'])
     #@commands.dm_only()  # TODO: Give the bot permission to delete !tournament-submit messages from public channels
@@ -124,9 +132,15 @@ class TournamentSubmit(BaseTournament):
             try:
                 level_name, author, expected_score, soln_name = schem.Solution.parse_metadata(soln_str)
 
+                # Check the round exists and the message is within its submission period
+                self.verify_round_submission_time(ctx.message, tournament_metadata, level_name)
+
+                round_metadata = tournament_metadata['rounds'][level_name]
+                round_dir = tournament_dir / round_metadata['dir']
+
                 # Skip participant name checks for the TO backdoor
                 if not is_tournament_host(ctx):
-                    team_name = self.add_or_check_player(tournament_dir, ctx.message.author, author)
+                    team_name = self.add_or_check_player(round_dir, ctx.message.author, author)
 
                     # Change the author name if the submitter is part of a team
                     if team_name is not None:
@@ -137,12 +151,6 @@ class TournamentSubmit(BaseTournament):
                 old_metadata_line = soln_str.strip().split('\n', maxsplit=1)[0]
                 new_metadata_line = f"SOLUTION:{level_name},{author},{expected_score},{new_soln_name}"
                 soln_str = soln_str.replace(old_metadata_line, new_metadata_line, 1)
-
-                # Check the round exists and the message is within its submission period
-                self.verify_round_submission_time(ctx.message, tournament_metadata, level_name)
-
-                round_metadata = tournament_metadata['rounds'][level_name]
-                round_dir = tournament_dir / round_metadata['dir']
 
                 with self.puzzle_submission_locks[level_name]:
                     level = self.get_level(round_dir)
@@ -253,20 +261,20 @@ class TournamentSubmit(BaseTournament):
         level_name, author, expected_score, soln_name = schem.Solution.parse_metadata(soln_str)
         soln_descr = schem.Solution.describe(level_name, author, expected_score, soln_name)
 
+        # Check the round exists and the message is within its submission period
+        self.verify_round_submission_time(ctx.message, tournament_metadata, level_name)
+
+        round_metadata = tournament_metadata['rounds'][level_name]
+        round_dir = tournament_dir / round_metadata['dir']
+
         # Register or verify this participant's nickname
-        self.add_or_check_player(tournament_dir, ctx.message.author, author)
+        self.add_or_check_player(round_dir, ctx.message.author, author)
 
         # Prefix the solution name with "[author] " for readability on import
         soln_name = f"[{author}]" if soln_name is None else f"[{author}] {soln_name}"
         old_metadata_line = soln_str.strip().split('\n', maxsplit=1)[0]
         new_metadata_line = f"SOLUTION:{level_name},{author},{expected_score},{soln_name}"
         soln_str = soln_str.replace(old_metadata_line, new_metadata_line, 1)
-
-        # Check the round exists and the message is within its submission period
-        self.verify_round_submission_time(ctx.message, tournament_metadata, level_name)
-
-        round_metadata = tournament_metadata['rounds'][level_name]
-        round_dir = tournament_dir / round_metadata['dir']
 
         # TODO: Check if the tournament host set a higher max submission cycles value, otherwise default to e.g.
         #       10,000,000 and break here if that's violated
@@ -326,10 +334,7 @@ class TournamentSubmit(BaseTournament):
                               to the specified round/puzzle. May be a past puzzle.
         """
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=False)
-        player_name = self.get_player_name(tournament_dir, ctx.message.author, missing_ok=True)
-        if player_name is None:
-            await ctx.send("You have no current tournament submissions.")
-            return
+        nickname = self.get_player_name(tournament_dir, ctx.message.author)
 
         reply = ""
 
@@ -349,6 +354,13 @@ class TournamentSubmit(BaseTournament):
                 reply += f"\n**{round_metadata['round_name']}, {puzzle_name}**:"
                 indent = '    '
 
+            # Identify the name their submissions are stored under, accounting for this round's teams
+            team_name = self.get_team_name(round_dir, ctx.message.author)
+            submit_name = team_name if team_name is not None else nickname
+            if submit_name is None:
+                reply += f"\n{indent}No submissions."
+                continue
+
             # Check for scoring solution
             with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as f:
                 solns_str = f.read()
@@ -356,7 +368,7 @@ class TournamentSubmit(BaseTournament):
             has_scoring = False
             for soln_str in schem.Solution.split_solutions(solns_str):
                 _, cur_author, score, soln_name = schem.Solution.parse_metadata(soln_str)
-                if cur_author == player_name:
+                if cur_author == submit_name:
                     has_scoring = True
                     level = self.get_level(round_dir)
                     reply += f"\n{indent}Scoring submission: {score}"
@@ -374,7 +386,7 @@ class TournamentSubmit(BaseTournament):
             fun_soln_lines = []
             for soln_str in schem.Solution.split_solutions(fun_solns_str):
                 _, cur_author, score, soln_name = schem.Solution.parse_metadata(soln_str)
-                if cur_author == player_name:
+                if cur_author == submit_name:
                     line = f"    {score}"
                     if soln_name is not None:
                         line += ' ' + soln_name
@@ -392,17 +404,20 @@ class TournamentSubmit(BaseTournament):
                                                                         'tournament-remove-non-scoring-submission'])
     #@commands.dm_only()  # Prevent public channel spam and make sure TO can't accidentally leak current round results
     async def tournament_remove_fun_submission(self, ctx, round_or_puzzle_name, *, soln_name=None):
-        """Remove a non-scoring submission to the given round/puzzle"""
+        """Remove a non-scoring submission to the given round/puzzle."""
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=False)
         puzzle_name = self.get_puzzle_name(tournament_metadata, round_or_puzzle_name, is_host=False, missing_ok=False)
-        player_name = self.get_player_name(tournament_dir, ctx.message.author, missing_ok=False)
-
-        # If the user passes an empty string, interpret it to an unnamed solution
-        if not soln_name:
-            soln_name = None
-
         round_metadata = tournament_metadata['rounds'][puzzle_name]
         round_dir = tournament_dir / round_metadata['dir']
+        nickname = self.get_player_name(tournament_dir, ctx.message.author)
+        team_name = self.get_team_name(round_dir, ctx.message.author)
+        submit_name = team_name if team_name is not None else nickname
+        if submit_name is None:
+            raise Exception("You have no current submissions to this round.")
+
+        # If the user passes an empty string, interpret it as an unnamed solution
+        if not soln_name:
+            soln_name = None
 
         # Prevent removal from a round whose results have already been published
         if 'end_post' in round_metadata:
@@ -416,9 +431,9 @@ class TournamentSubmit(BaseTournament):
             reply = None
             for cur_soln_str in schem.Solution.split_solutions(solns_str):
                 _, cur_author, score, cur_soln_name = schem.Solution.parse_metadata(cur_soln_str)
-                if cur_author == player_name and cur_soln_name == soln_name:
+                if cur_author == submit_name and cur_soln_name == soln_name:
                     if reply is not None:
-                        print(f"Error: multiple non-scoring solutions to {puzzle_name} by {player_name} have same name {soln_name}")
+                        print(f"Internal Error: multiple non-scoring solutions to {puzzle_name} by {submit_name} have same name {soln_name}")
 
                     if soln_name is None:
                         reply = f"Removed unnamed non-scoring solution: {score}"

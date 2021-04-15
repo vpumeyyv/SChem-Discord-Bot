@@ -94,13 +94,14 @@ class BaseTournament(commands.Cog):
     #     active_tournament.txt -> "slugified_tournament_name_1"
     #     slugified_tournament_name_1/
     #         tournament_metadata.json -> name, host, etc, + round dirs / metadata
-    #         participants.json        -> discord_tag: discord_id, nickname, team_name (if any)
+    #         participants.json        -> discord_tag: discord_id, nickname
     #         standings.json           -> 'rounds': {puzzle_name: {player: score}}, 'total': {player: score}
     #         bonus1_puzzleA/
     #         round1_puzzleB/
     #             puzzleB.puzzle
     #             solutions.txt
     #             solutions_fun.txt
+    #             teams.json           -> team_name: [discord_tags]  (for this round)
     #             submissions_history.json  -> author_or_team: [[time, score, metric, soln_name, comment], ...]
     #         round2_puzzleC/
     #         ...
@@ -192,24 +193,29 @@ class BaseTournament(commands.Cog):
         return tournament_dir, tournament_metadata
 
     @staticmethod
-    def get_player_name(tournament_dir, discord_user: discord.User, missing_ok=True):
-        """Given a discord user, get their nickname, or else team name if they are part of a team."""
-        with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
+    def get_player_name(tournament_dir: Path, discord_user: discord.User):
+        """Given a discord user, get their nickname, or return None if they don't exist or have no nickname set."""
+        with open(tournament_dir / 'participants.json', encoding='utf-8') as f:
             participants = json.load(f)
 
         discord_tag = str(discord_user)
-        if discord_tag not in participants:
-            if missing_ok:
-                return None
-            else:
-                raise Exception("You have no current tournament submissions.")
-
-        if 'team' in participants[discord_tag]:
-            return participants[discord_tag]['team']
-        else:
-            assert 'name' in participants[discord_tag], \
-                "Internal Error: Missing nickname or team name in participant info"
+        if discord_tag in participants and 'name' in participants[discord_tag]:
             return participants[discord_tag]['name']
+        else:
+            return None
+
+    @staticmethod
+    def get_team_name(round_dir: Path, discord_user: discord.User):
+        """Given a discord user, return their team name for the given round or else None."""
+        with open(round_dir / 'teams.json', encoding='utf-8') as f:
+            teams = json.load(f)
+
+        discord_tag = str(discord_user)
+        for team_name, tags in teams.items():
+            if discord_tag in tags:
+                return team_name
+
+        return None
 
     @staticmethod
     def get_puzzle_name(tournament_metadata, round_or_puzzle_name, is_host=False, missing_ok=True):
@@ -527,7 +533,7 @@ class BaseTournament(commands.Cog):
 
         # Normalize the metametric scores and award points
         col_headers.append('Points')
-        max_metametric = metametrics[0]  # Since we already sorted
+        max_metametric = metametrics[0] if metametrics else None  # Since we already sorted
         standings_scores = {}  # player_name: points_earned
         for i, metametric in enumerate(metametrics):
             author = results[i][1]
@@ -583,20 +589,16 @@ class BaseTournament(commands.Cog):
         return msg_strings, attachments, standings_scores
 
     @staticmethod
-    def name_to_discord_tag_dict(tournament_dir):
-        """Return a dict of player nicknames or team names to discord tags, for ease of lookup."""
+    def nickname_to_discord_tags_dict(tournament_dir):
+        """Return a dict of player nicknames to discord tags, for ease of lookup."""
         with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
             participants = json.load(f)
 
-        # Create a reverse nickname_or_team_name : discord_tag dict for ease of lookup
+        # Create a reverse nickname : discord_tag dict for ease of lookup
         name_to_discord_tags = {}
         for discord_tag, player_info in participants.items():
-            if 'team' in player_info:
-                if player_info['team'] not in name_to_discord_tags:
-                    name_to_discord_tags[player_info['team']] = []
-                name_to_discord_tags[player_info['team']].append(discord_tag)
-            else:
-                name_to_discord_tags[player_info['name']] = [discord_tag]
+            if 'name' in player_info:
+                name_to_discord_tags[player_info['name']] = [discord_tag]  # In list so this plays nice with teams dicts
 
         return name_to_discord_tags
 
@@ -623,15 +625,21 @@ class BaseTournament(commands.Cog):
                     standings['total'][discord_tag] += points
 
     @classmethod
-    def update_standings(cls, tournament_dir, puzzle_name, standings_delta):
+    def update_standings(cls, round_dir, puzzle_name, standings_delta):
         """Given a puzzle and dict of player/team names to points delta, update the tournament standings."""
-        with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:
+        with open(round_dir.parent / 'standings.json', 'r', encoding='utf-8') as f:
             standings = json.load(f)
 
-        standings['rounds'][puzzle_name] = standings_delta
-        cls.update_standings_dict(standings, standings_delta, cls.name_to_discord_tag_dict(tournament_dir))
+        # Get a dict of nicknames/team names to discord tags based on the puzzle's teams
+        round_name_to_tags_dict = cls.nickname_to_discord_tags_dict(round_dir.parent)
+        with open(round_dir / 'teams.json') as f:
+            teams = json.load(f)
+        round_name_to_tags_dict.update(teams)
 
-        with open(tournament_dir / 'standings.json', 'w', encoding='utf-8') as f:
+        standings['rounds'][puzzle_name] = standings_delta
+        cls.update_standings_dict(standings, standings_delta, round_name_to_tags_dict)
+
+        with open(round_dir.parent / 'standings.json', 'w', encoding='utf-8') as f:
             json.dump(standings, f, ensure_ascii=False, indent=4)
 
     async def announce_round_results(self, puzzle_name, round_metadata):
@@ -640,6 +648,7 @@ class BaseTournament(commands.Cog):
             assert 'end_post' not in round_metadata, "Round results have already been announced!"
 
             # Wait until the round start time + 5 seconds to ensure last-second submitters have grabbed the submission lock
+            # TODO: + 5 minutes so players get to enjoy their usual post-end pre-results score-teasing banter
             end = round_metadata['end']
             await wait_until(datetime.fromisoformat(end) + timedelta(seconds=5))
 
@@ -650,6 +659,7 @@ class BaseTournament(commands.Cog):
                 # Reread the tournament metadata since it may have changed
                 tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
                 round_metadata = tournament_metadata['rounds'][puzzle_name]
+                round_dir = tournament_dir / round_metadata['dir']
                 assert round_metadata['end'] == end, \
                     "Round end changed but original results announcement task was not cancelled"
                 assert 'end_post' not in round_metadata, \
@@ -661,7 +671,7 @@ class BaseTournament(commands.Cog):
                     self.round_results_announcement_and_standings_change(tournament_dir, tournament_metadata, puzzle_name)
 
                 # Increment the tournament's standings
-                self.update_standings(tournament_dir, puzzle_name, standings_delta)
+                self.update_standings(round_dir, puzzle_name, standings_delta)
 
                 # Send each of the sub-2000 char announcement messages, adding the attachments to the last one
                 # Set the end post link to that of the first sent message

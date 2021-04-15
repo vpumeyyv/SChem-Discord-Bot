@@ -443,8 +443,12 @@ class TournamentAdmin(BaseTournament):
             await puzzle_file.save(round_dir / puzzle_file.filename)
             if description_file:
                 await description_file.save(round_dir / 'description.txt')
+            else:
+                (round_dir / 'description.txt').touch()
             (round_dir / 'solutions.txt').touch()
             (round_dir / 'solutions_fun.txt').touch()
+            with open(round_dir / 'teams.json', 'w', encoding='utf-8') as f:
+                json.dump({}, f, ensure_ascii=False, indent=4)
             with open(round_dir / 'submissions_history.json', 'w', encoding='utf-8') as f:
                 json.dump({}, f, ensure_ascii=False, indent=4)
 
@@ -464,7 +468,8 @@ class TournamentAdmin(BaseTournament):
 
             # TODO 2: Pareto frontier using the full submission history!
 
-        await ctx.send(f"Successfully added {round_name} {level.name} to {tournament_metadata['name']}")
+        await ctx.send(f"Successfully added {round_name} {level.name} to {tournament_metadata['name']}"
+                       + f"\nPreview its announcement post with !tournament-info {round_name}")
 
     @commands.command(name='tournament-puzzle-update', aliases=['tournament-puzzle-edit', 'tournament-update-puzzle',
                                                                 'tournament-edit-puzzle'])
@@ -861,7 +866,7 @@ class TournamentAdmin(BaseTournament):
                     standings = json.load(f)
 
                 negative_round_standings = {k: -v for k, v in standings['rounds'][puzzle_name].items()}
-                self.update_standings(tournament_dir, puzzle_name, negative_round_standings)
+                self.update_standings(round_dir, puzzle_name, negative_round_standings)
 
                 # Delete the puzzle from the updated standings
                 with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:

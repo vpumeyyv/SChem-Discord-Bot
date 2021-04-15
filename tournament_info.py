@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import copy
 import json
 
 import discord
@@ -105,7 +106,7 @@ class TournamentInfo(BaseTournament):
         with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:
             standings = json.load(f)
 
-        name_to_discord_tags = self.name_to_discord_tag_dict(tournament_dir)  # Reverse lookup dict needed for updates
+        name_to_discord_tags = self.nickname_to_discord_tags_dict(tournament_dir)  # Reverse lookup dict needed for updates
 
         # Tally the current results of each open puzzle and add them to the current standings
         for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
@@ -113,7 +114,14 @@ class TournamentInfo(BaseTournament):
                 standings_delta = self.round_results_announcement_and_standings_change(tournament_dir,
                                                                                        tournament_metadata,
                                                                                        puzzle_name)[2]
-                self.update_standings_dict(standings, standings_delta, name_to_discord_tags)
+
+                # Create a teams-aware version of the lookup dict based on the teams for this puzzle
+                with open(tournament_dir / round_metadata['dir'] / 'teams.json') as f:
+                    teams = json.load(f)
+                round_name_to_tags_dict = copy.deepcopy(name_to_discord_tags)
+                round_name_to_tags_dict.update(teams)
+
+                self.update_standings_dict(standings, standings_delta, round_name_to_tags_dict)
 
         # Create a standings table (in chunks under discord's char limit as needed)
         for standings_msg in self.table_msgs(title_line="**Standings**",
