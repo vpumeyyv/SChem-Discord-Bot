@@ -652,10 +652,10 @@ class BaseTournament(commands.Cog):
         try:
             assert 'end_post' not in round_metadata, "Round results have already been announced!"
 
-            # Wait until the round start time + 5 seconds to ensure last-second submitters have grabbed the submission lock
-            # TODO: + 5 minutes so players get to enjoy their usual post-end pre-results score-teasing banter
+            # Wait until the round start time + 5 minutes, both to ensure last-second submitters have grabbed the
+            # submission lock and so players get to enjoy their usual post-end, pre-results score-teasing banter
             end = round_metadata['end']
-            await wait_until(datetime.fromisoformat(end) + timedelta(seconds=5))
+            await wait_until(datetime.fromisoformat(end) + timedelta(minutes=5))
 
             await self.bot.wait_until_ready()  # Looks awkward but apparently get_channel can return None if bot isn't ready
             channel = self.bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
