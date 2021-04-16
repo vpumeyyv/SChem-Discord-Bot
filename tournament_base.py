@@ -327,8 +327,8 @@ class BaseTournament(commands.Cog):
 
         announcement = f"**Announcing the {tournament_metadata['name']}**"
         announcement += f"\n{description}"
-        announcement += f"\nMetametric: `{tournament_metadata['metametric']}`"
-        announcement += f"\nEnd date: {format_date(tournament_metadata['end'])}"
+        announcement += f"\n\n**Metametric**: `{tournament_metadata['metametric']}`"
+        announcement += f"\n**End date**: {format_date(tournament_metadata['end'])}"
 
         # Return the announcement in chunks under discord's char limit
         return split_by_char_limit(announcement, 1999)
