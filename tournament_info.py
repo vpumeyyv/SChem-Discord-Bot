@@ -17,7 +17,6 @@ class TournamentInfo(BaseTournament):
     is_host = commands.check(is_tournament_host)
 
     @commands.command(name='tournament-info', aliases=['ti'])
-    @commands.dm_only()  # Prevent public channel spam
     async def tournament_info(self, ctx, *, round_or_puzzle_name=None):
         """Info on the tournament or specified round/puzzle.
 
