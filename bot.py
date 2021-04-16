@@ -53,7 +53,13 @@ Please note that I will only respond to submission-related commands if sent in a
 Finally, it hopefully goes without saying, but please do not deliberately DDOS me or submit an excessive number of non-scoring solutions. I'm just a small bot trying to make my way in the world with naught but a raspberry pi and limited SD card space!
 """, allowed_mentions=discord.AllowedMentions(users=False))  # Don't actually ping me
 
+def _no_dm(ctx):
+    """Check for dis-allowing a command from being run in a DM."""
+    return ctx.message.guild is not None
+no_dm = commands.check(_no_dm)
+
 @bot.command(name='run', aliases=['r', 'score', 'validate', 'check'])
+@no_dm
 async def run(ctx):
     """Run/validate the attached solution file.
     Must be a Community Edition export.
