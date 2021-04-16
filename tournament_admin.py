@@ -111,7 +111,7 @@ class TournamentAdmin(BaseTournament):
         # Check attached description file
         assert len(ctx.message.attachments) == 1, "Expected one attached tournament description file!"
         description_file = ctx.message.attachments[0]
-        await self.read_attachment(description_file, extension='.txt')  # Make sure the file is parsable
+        await self.read_attachment(description_file)  # Make sure the file is parsable
 
         tournament_dir_name = slugify(name)  # Convert to a valid directory name
         assert tournament_dir_name, f"Invalid tournament name {name}"
@@ -334,8 +334,8 @@ class TournamentAdmin(BaseTournament):
     #                                                    # In any case tournament-update should be sufficient for now
 
     @staticmethod
-    async def read_attachment(attachment, extension):
-        if not attachment.filename.endswith(extension):
+    async def read_attachment(attachment, extension=None):
+        if extension is not None and not attachment.filename.endswith(extension):
             raise ValueError(f"Attached file should use the extension {extension}")
 
         text_bytes = await attachment.read()
@@ -564,8 +564,12 @@ class TournamentAdmin(BaseTournament):
             if args.metric:
                 validate_metric(args.metric)
 
+            # Prepare a text post summarizing the changed fields
+            # TODO: @tournament or some such
+            summary_text = (f"**The tournament host has updated {round_metadata['round_name']}, {puzzle_name}**"
+                            + "\nChanges:")
+
             if new_description_file is not None:
-                assert 'start_post' not in round_metadata, "Cannot update description on already-announced puzzle"
                 description = await self.read_attachment(new_description_file,
                                                          extension='.txt')  # Make sure the file is parsable
 
@@ -577,12 +581,10 @@ class TournamentAdmin(BaseTournament):
                 else:
                     raise Exception("Please use .puzzle extension for puzzle file attachments.")
 
-                updated_fields.add('description')
+                await new_description_file.save(round_dir / 'description.txt')
 
-            # Prepare a text post summarizing the changed fields
-            # TODO: @tournament or some such
-            summary_text = (f"**The tournament host has updated {round_metadata['round_name']}, {puzzle_name}**"
-                            + "\nChanges:")
+                summary_text += "\n  • Description updated."
+                updated_fields.add('description')
 
             # Update round metadata and summary text
             for k, v in vars(args).items():  # Re-fetch args dict since start/end might be reformatted
@@ -783,7 +785,7 @@ class TournamentAdmin(BaseTournament):
                 self.round_results_tasks[new_puzzle_name] = self.bot.loop.create_task(self.announce_round_results(puzzle_name, round_metadata))
 
             # DM any players whose solutions were invalidated
-            if 'start_post' in round_metadata and ctx.message.attachments and invalid_soln_authors:
+            if 'start_post' in round_metadata and new_puzzle_file and invalid_soln_authors:
                 with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
                     participants = json.load(f)
 
