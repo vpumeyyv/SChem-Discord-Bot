@@ -18,7 +18,6 @@ class TournamentTeams(BaseTournament):
     is_host = commands.check(is_tournament_host)
 
     @commands.command(name='tournament-teams', aliases=['tt'])
-    @is_host
     async def tournament_teams(self, ctx, *, round_or_puzzle_name):
         """List all teams formed for the specified puzzle or round name."""
         is_host = is_tournament_host(ctx)
