@@ -226,13 +226,19 @@ class BaseTournament(commands.Cog):
     def get_puzzle_name(tournament_metadata, round_or_puzzle_name, is_host=False, missing_ok=True):
         """Given a string, return the puzzle name for any puzzle/round matching it case-insensitively.
 
+        Also accept strings matching the first lowercase char of each word in the round name (or the whole word for
+        numbers), e.g. r10 for Round 10.
+
         is_host: Hide future puzzles if not True; default False.
         missing_ok: If True, return None if the puzzle is missing; else raise exception. Default True.
         """
         lower_name = round_or_puzzle_name.lower()
         for cur_puzzle_name, round_metadata in tournament_metadata['rounds'].items():
             if ((is_host or 'start_post' in round_metadata)
-                    and lower_name in (cur_puzzle_name.lower(), round_metadata['round_name'].lower())):
+                    and lower_name in (cur_puzzle_name.lower(),
+                                       round_metadata['round_name'].lower(),
+                                       ''.join(s[0].lower() if not s.replace('.', '', 1).isdigit() else s
+                                               for s in round_metadata['round_name'].split()))):
                 return cur_puzzle_name
 
         if missing_ok:

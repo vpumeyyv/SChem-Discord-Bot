@@ -19,7 +19,11 @@ class TournamentTeams(BaseTournament):
 
     @commands.command(name='tournament-teams', aliases=['tt'])
     async def tournament_teams(self, ctx, *, round_or_puzzle_name):
-        """List all teams formed for the specified puzzle or round name."""
+        """List all teams formed for the specified puzzle or round name.
+
+        round_or_puzzle_name: (Case-insensitive) Return teams in the matching round/puzzle.
+                              A string like r10 will also match "Round 10" as a shortcut.
+        """
         is_host = is_tournament_host(ctx)
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=is_host)
         puzzle_name = self.get_puzzle_name(tournament_metadata, round_or_puzzle_name, is_host=is_host, missing_ok=False)

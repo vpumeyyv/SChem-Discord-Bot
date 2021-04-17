@@ -345,6 +345,7 @@ class TournamentSubmit(BaseTournament):
 
         round_or_puzzle_name: (Case-insensitive) If provided, show only your submissions
                               to the specified round/puzzle. May be a past puzzle.
+                              A string like r10 will also match "Round 10" as a shortcut.
         """
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=False)
         nickname = self.get_player_name(tournament_dir, ctx.message.author)
@@ -418,7 +419,13 @@ class TournamentSubmit(BaseTournament):
                                                                         'tournament-remove-non-scoring-submission'])
     @commands.dm_only()
     async def tournament_remove_fun_submission(self, ctx, round_or_puzzle_name, *, soln_name=None):
-        """Remove a non-scoring submission to the given round/puzzle."""
+        """Remove a non-scoring submission to the given round/puzzle.
+
+        round_or_puzzle_name: (Case-insensitive) The matching round/puzzle to remove a NS solution from.
+                              Must be quoted if contains spaces.
+                              A string like r10 will also match "Round 10" as a shortcut.
+        soln_name: The name of the NS solution to remove (case-sensitive). If omitted, remove unnamed solution.
+        """
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=False)
         puzzle_name = self.get_puzzle_name(tournament_metadata, round_or_puzzle_name, is_host=False, missing_ok=False)
         round_metadata = tournament_metadata['rounds'][puzzle_name]

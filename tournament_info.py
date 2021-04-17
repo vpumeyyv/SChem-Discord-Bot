@@ -22,6 +22,7 @@ class TournamentInfo(BaseTournament):
 
         round_or_puzzle_name: (Case-insensitive) Return links to the matching
                               puzzle's announcement (/ results if available) posts.
+                              A string like r10 will also match "Round 10" as a shortcut.
                               If not specified, show all puzzle announcement links
                               and current tournament standings.
         """
