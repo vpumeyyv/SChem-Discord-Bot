@@ -205,13 +205,13 @@ class TournamentSubmit(BaseTournament):
                             #       modify the metric after the puzzle opens if necessary
                             old_metric_score = eval_metric(schem.Solution(level, cur_soln_str), metric)
                             if soln_metric_score > old_metric_score:
-                                ctx.message.add_reaction('⚠')
+                                await ctx.message.add_reaction('⚠')
 
                                 confirm_msg = await ctx.send(
                                     "Warning: This solution regresses your last submission's metric score, previously: "
                                     + str(round(old_metric_score, 3)))
                                 if not await self.wait_for_confirmation(ctx, confirm_msg):
-                                    ctx.message.add_reaction('❌')
+                                    await ctx.message.add_reaction('❌')
                                     return
                         else:
                             new_soln_strs.append(cur_soln_str)
