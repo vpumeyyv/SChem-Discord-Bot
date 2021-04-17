@@ -37,9 +37,11 @@ class TournamentTeams(BaseTournament):
             await ctx.send(
                 f"{round_metadata['round_name']} teams:\n"
                 + "\n".join(f"  `{team_name}`: "
-                            + ', '.join(f"`{participants[tag]['name']}`" if 'name' in participants[tag] else tag
+                            + ', '.join(f"<@{participants[tag]['id']}>"
+                                        + (f" (`{participants[tag]['name']}`)" if 'name' in participants[tag] else '')
                                         for tag in tags)
-                            for team_name, tags in teams.items()))
+                            for team_name, tags in teams.items()),
+                allowed_mentions=discord.AllowedMentions(users=False))
 
     def remove_submissions_by(self, round_dir: Path, puzzle_name: str, authors: set):
         """Remove all submissions from the given round that match any of the given authors."""
