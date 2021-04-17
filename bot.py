@@ -21,29 +21,31 @@ bot = commands.Bot(command_prefix='!',
                                + "\nRuns/validates Community-Edition-exported solution files, excluding legacy bugs.",
                    case_insensitive=True)
 
-@bot.before_invoke
-async def is_valid_ctx(ctx):
-    """Ignore commands not sent via DM or in the bot's designated channel."""
-    if not (isinstance(ctx.channel, discord.channel.DMChannel) or ctx.channel.id == ANNOUNCEMENTS_CHANNEL_ID):
-        raise commands.ChannelNotReadable(ctx.channel)
-
 @bot.event
 async def on_ready():
     print(f'{bot.user.name} has connected to Discord!')
 
 @bot.event
+async def on_message(msg):
+    """Ignore messages not sent via DM or in the bot's designated channel."""
+    if msg.guild is None or msg.channel.id == ANNOUNCEMENTS_CHANNEL_ID:
+        await bot.process_commands(msg)
+
+@bot.event
 async def on_command_error(ctx, error):
     """Default bot command error handler."""
-    if isinstance(error, (commands.CommandNotFound, commands.CheckFailure, commands.ChannelNotReadable)):
-        return  # Avoid logging errors when users put in invalid commands
+    # Don't reply when users put in invalid commands
+    if isinstance(error, (commands.CommandNotFound, commands.CheckFailure)):
+        return
 
-    # Log the error
-    log_error = f"{format_date(str(ctx.message.created_at.replace(tzinfo=timezone.utc)))} by {ctx.message.author}:"
-    log_error += f"\n{ctx.message.content}"
-    if ctx.message.attachments:
-        log_error += f" (+{len(ctx.message.attachments)} attachment(s))"
-    log_error += f"\n{type(error).__name__}: {error}"
-    print(log_error)
+    # Log the error, unless it was a mis-use of the arg-formatting
+    if not isinstance(error, commands.MissingRequiredArgument):
+        log_error = f"{format_date(str(ctx.message.created_at.replace(tzinfo=timezone.utc)))} by {ctx.message.author}:"
+        log_error += f"\n{ctx.message.content}"
+        if ctx.message.attachments:
+            log_error += f" (+{len(ctx.message.attachments)} attachment(s))"
+        log_error += f"\n{type(error).__name__}: {error}"
+        print(log_error)
 
     await ctx.send(str(error))  # Probably bad practice but it makes the commands' code nice...
 
