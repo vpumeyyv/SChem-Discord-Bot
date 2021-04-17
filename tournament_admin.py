@@ -817,7 +817,7 @@ class TournamentAdmin(BaseTournament):
                            + " since they have no associated discord account (you probably submitted for them): " \
                            + ", ".join(f"`{name}`" for name in non_discord_players) + "." \
                            + "\nConsider contacting these players to inform them of their invalidated solution(s)."
-                    for i, msg_string in enumerate(split_by_char_limit(warn, 1999)):
+                    for msg_string in split_by_char_limit(warn, 1999):
                         await ctx.send(msg_string)
 
         await ctx.send(f"Updated {', '.join(updated_fields)} for {round_metadata['round_name']}, {puzzle_name}")

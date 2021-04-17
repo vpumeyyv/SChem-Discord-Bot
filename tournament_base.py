@@ -260,6 +260,34 @@ class BaseTournament(commands.Cog):
         return schem.Level(level_code)
 
     @staticmethod
+    def get_submit_history(round_dir, authors=None):
+        """Return a string of a round's submission history. If authors specified, concatenate and return only their
+        histories in the given order.
+        """
+        # Convert the submission history to a more readable text file and attach it
+        with open(round_dir / 'submissions_history.json', 'r', encoding='utf-8') as f:
+            submissions_history = json.load(f)
+
+        if authors is None:
+            authors = submissions_history.keys()
+
+        submissions_history_str = ""
+        for author in authors:
+            if author not in submissions_history:
+                continue
+
+            submissions = submissions_history[author]
+            for submit_time, score, metric, soln_name, comment in submissions:
+                submission_str = f"{author}: {format_date(submit_time)} - {score} - {round(metric, 3)}"
+                if soln_name is not None:
+                    submission_str += f' "{soln_name}"'
+                if comment is not None:
+                    submission_str += f' {comment}'
+                submissions_history_str += submission_str + '\n'
+
+        return submissions_history_str
+
+    @staticmethod
     def sorted_and_ranked(rows, sort_idx=-1, desc=False):
         """Given an iterable of rows containing strings or numeric types, return a list of them sorted on the given
         numeric column and with a rank prepended to each row.
@@ -587,22 +615,9 @@ class BaseTournament(commands.Cog):
 
             attachments.append(discord.File(str(fun_solns_file), filename=fun_solns_file.name))
 
-        # Convert the submission history to a more readable text file and attach it
-        with open(round_dir / 'submissions_history.json', 'r', encoding='utf-8') as f:
-            submissions_history = json.load(f)
-
-        submissions_history_str = ""
-        for author, submissions in submissions_history.items():
-            for submit_time, score, metric, soln_name, comment in submissions:
-                submission_str = f"{author}: {format_date(submit_time)} - {score} - {round(metric, 3)}"
-                if soln_name is not None:
-                    submission_str += f' "{soln_name}"'
-                if comment is not None:
-                    submission_str += f' {comment}'
-                submissions_history_str += submission_str + '\n'
-
+        # Get the submission history as a text file and attach it
         with io.StringIO() as f:
-            f.write(submissions_history_str)
+            f.write(self.get_submit_history(round_dir))
             f.seek(0)  # Reset file io position
             attachments.append(discord.File(f, filename='submissions_history.txt'))
 
