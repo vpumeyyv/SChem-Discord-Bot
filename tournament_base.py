@@ -497,13 +497,22 @@ class BaseTournament(commands.Cog):
         solns_file = round_dir / 'solutions.txt'
         with open(solns_file, 'r', encoding='utf-8') as sf:
             solns_str = sf.read()
-        attachments.append(discord.File(str(solns_file), filename=solns_file.name))
 
-        solutions = [schem.Solution(level, soln_str) for soln_str in schem.Solution.split_solutions(solns_str)]
+        soln_strs = list(schem.Solution.split_solutions(solns_str))
+        solutions = [schem.Solution(level, soln_str) for soln_str in soln_strs]
 
         # Calculate each score and the top score
         metric_scores_and_terms = [get_metric_and_terms(solution, round_metadata['metric']) for solution in solutions]
         min_metric_score = min(x[0] for x in metric_scores_and_terms) if metric_scores_and_terms else None
+
+        # Re-save solutions.txt with the solutions sorted by metric (high to low)
+        # Modifying solutions.txt before announcements is a little smelly but avoids storing metrics with submissions or
+        # re-calculating all metrics on every submit
+        with open(solns_file, 'w', encoding='utf-8') as sf:
+            sf.write('\n'.join(soln_str for soln_str, _ in sorted(zip(soln_strs, metric_scores_and_terms),
+                                                                  key=lambda x: x[1][0],
+                                                                  reverse=True)))
+        attachments.append(discord.File(str(solns_file), filename=solns_file.name))
 
         # Sort and rank the solutions by metric, and convert them to table rows.
         # Also calculate their metametric score here so we can normalize and calculate points after
