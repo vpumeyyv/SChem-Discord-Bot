@@ -12,7 +12,7 @@ from utils import format_date
 
 
 class TournamentInfo(BaseTournament):
-    """Class providing info-related bot command."""
+    """Class providing info-related bot commands."""
 
     is_host = commands.check(is_tournament_host)
 
