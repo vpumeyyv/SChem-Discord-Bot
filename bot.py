@@ -16,7 +16,8 @@ ANNOUNCEMENTS_CHANNEL_ID = int(os.getenv('SCHEM_BOT_ANNOUNCEMENTS_CHANNEL_ID'))
 
 bot = commands.Bot(command_prefix='!',
                    description="SpaceChem-simulating bot."
-                               + "\nRuns/validates Community-Edition-exported solution files, excluding legacy bugs.")
+                               + "\nRuns/validates Community-Edition-exported solution files, excluding legacy bugs.",
+                   case_insensitive=True)
 
 @bot.before_invoke
 async def is_valid_ctx(ctx):

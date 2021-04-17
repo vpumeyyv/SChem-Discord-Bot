@@ -13,7 +13,7 @@ from tournament_base import BaseTournament, is_tournament_host
 
 
 class TournamentTeams(BaseTournament):
-    """Class providing a tournament-info bot command."""
+    """Class providing teams-related bot commands."""
 
     is_host = commands.check(is_tournament_host)
 
