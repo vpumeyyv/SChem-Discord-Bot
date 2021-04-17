@@ -111,13 +111,12 @@ class TournamentSubmit(BaseTournament):
     @commands.Cog.listener('on_message')
     async def tournament_submit_shortcut(self, msg):
         """Treat any non-command DM message containing an attachment(s) as a call to tournament-submit."""
-        if msg.content.startswith(self.bot.command_prefix):
-            await self.bot.process_commands(msg)  # Process normally
-        elif msg.guild is None and msg.attachments:
+        if not msg.content.startswith(self.bot.command_prefix) and msg.guild is None and msg.attachments:
             ctx = await self.bot.get_context(msg)
             # TODO: This is okay for now since our only pre-hook is a channel check, but if we ever need other hooks
             #       this should be called properly via process_commands (after prepending "!ts ")
             await self.tournament_submit(ctx, comment=msg.content)
+        # else do nothing as this does not replace the regular bot listener which will work on prefixed commands
 
     # TODO: Give the bot permission to delete !tournament-submit messages from public channels
     #       since someone will inevitably forget to use DMs
