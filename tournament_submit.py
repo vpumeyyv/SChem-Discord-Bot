@@ -242,8 +242,9 @@ class TournamentSubmit(BaseTournament):
 
                     if author not in submissions_history:
                         submissions_history[author] = []
-                        # Sort by author name
-                        submissions_history = {k: submissions_history[k] for k in sorted(submissions_history)}
+                        # Sort by author name, case-insensitively
+                        submissions_history = {k: submissions_history[k] for k in sorted(submissions_history,
+                                                                                         key=lambda s: s.lower())}
 
                     submit_time = (ctx.message.created_at if ctx.message.edited_at is None
                                    else ctx.message.edited_at).replace(tzinfo=timezone.utc)
