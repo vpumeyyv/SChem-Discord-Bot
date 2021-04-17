@@ -570,7 +570,7 @@ class BaseTournament(commands.Cog):
         if fun_solns_str:
             fun_solutions = [schem.Solution(level, s) for s in schem.Solution.split_solutions(fun_solns_str)]
             fun_col_headers = ('Player', 'Score', 'Solution Name')
-            fun_table_rows = [(soln.author, soln.expected_score, soln.name if soln.name else '')
+            fun_table_rows = [(soln.author, str(soln.expected_score), soln.name if soln.name else '')
                               for soln in fun_solutions]
 
             msg_strings.extend(self.table_msgs(title_line="**Non-Scoring Submissions**",
