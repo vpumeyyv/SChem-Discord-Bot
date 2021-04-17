@@ -112,10 +112,8 @@ class TournamentSubmit(BaseTournament):
     async def tournament_submit_shortcut(self, msg):
         """Treat any non-command DM message containing an attachment(s) as a call to tournament-submit."""
         if not msg.content.startswith(self.bot.command_prefix) and msg.guild is None and msg.attachments:
-            ctx = await self.bot.get_context(msg)
-            # TODO: This is okay for now since our only pre-hook is a channel check, but if we ever need other hooks
-            #       this should be called properly via process_commands (after prepending "!ts ")
-            await self.tournament_submit(ctx, comment=msg.content)
+            msg.content = f"{self.bot.command_prefix}tournament-submit {msg.content}"
+            await self.bot.process_commands(msg)
         # else do nothing as this does not replace the regular bot listener which will work on prefixed commands
 
     # TODO: Give the bot permission to delete !tournament-submit messages from public channels
@@ -191,32 +189,47 @@ class TournamentSubmit(BaseTournament):
                     await msg.edit(content=f"Successfully validated {soln_descr}, metric score: {round(soln_metric_score, 3)}")
 
                     # Update solutions.txt
-                    with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as f:
-                        solns_str = f.read()
+                    # To ensure async-safe file-writing, we may need to read the file twice: the first time to ask
+                    # the user if they're ok with regressing their metric, and the second to make sure we pick up any
+                    # updates to the file that happened while we were waiting for the user to confirm the regression.
+                    # If there's no regression the second read can be avoided.
+                    # This leaves the small edge case that the second read will blindly assume the player is fine with
+                    # the regression even if e.g. a team member just made their regression even bigger... but that
+                    # should be acceptable given they were ok with any regression at all
+                    for i in range(2):
+                        with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as f:
+                            solns_str = f.read()
 
-                    new_soln_strs = []
-                    for cur_soln_str in schem.Solution.split_solutions(solns_str):
-                        _, cur_author, _, _ = schem.Solution.parse_metadata(cur_soln_str)
-                        if cur_author == author:
-                            # Warn the user if their submission regresses the metric score
-                            # (we will still allow the submission in case they wanted to submit something sub-optimal for
-                            #  style/meme/whatever reasons)
-                            # Note: This re-does the work of calculating the old metric but is simpler and allows the TO to
-                            #       modify the metric after the puzzle opens if necessary
-                            old_metric_score = eval_metric(schem.Solution(level, cur_soln_str), metric)
-                            if soln_metric_score > old_metric_score:
-                                await ctx.message.add_reaction('⚠')
+                        new_soln_strs = []
+                        for cur_soln_str in schem.Solution.split_solutions(solns_str):
+                            _, cur_author, _, _ = schem.Solution.parse_metadata(cur_soln_str)
+                            if cur_author == author:
+                                # On the second read we are safe to assume the user is okay with the regression
+                                if i == 1:
+                                    continue
 
-                                confirm_msg = await ctx.send(
-                                    "Warning: This solution regresses your last submission's metric score, previously: "
-                                    + str(round(old_metric_score, 3)))
-                                if not await self.wait_for_confirmation(ctx, confirm_msg):
-                                    await ctx.message.add_reaction('❌')
-                                    return
+                                # Warn the user if their submission regresses the metric score
+                                # (we will still allow the submission in case they wanted to submit something
+                                # sub-optimal for style/meme/whatever reasons)
+                                # Note: This re-does the work of calculating the old metric but is simpler and allows
+                                #       the TO to modify the metric after the puzzle opens if necessary
+                                old_metric_score = eval_metric(schem.Solution(level, cur_soln_str), metric)
+                                if soln_metric_score > old_metric_score:
+                                    await ctx.message.add_reaction('⚠')
+
+                                    confirm_msg = await ctx.send(
+                                        "Warning: This solution regresses your last submission's metric score, previously: "
+                                        + str(round(old_metric_score, 3)))
+                                    if not await self.wait_for_confirmation(ctx, confirm_msg):
+                                        await ctx.message.add_reaction('❌')
+                                        return
+                                    break
+                            else:
+                                new_soln_strs.append(cur_soln_str)
                         else:
-                            new_soln_strs.append(cur_soln_str)
-
-                    new_soln_strs.append(soln_str)
+                            # If we didn't break in the loop, we did no async operations and can skip the re-read
+                            new_soln_strs.append(soln_str)
+                            break
 
                     with open(round_dir / 'solutions.txt', 'w', encoding='utf-8') as f:
                         # Make sure not to write windows newlines or python will double the carriage returns
