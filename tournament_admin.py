@@ -15,7 +15,7 @@ from slugify import slugify
 
 from metric import validate_metric, validate_metametric
 from tournament_base import PuzzleSubmissionsLock, BaseTournament, ANNOUNCEMENTS_CHANNEL_ID, is_tournament_host
-from utils import process_start_end_dates, format_date
+from utils import process_start_end_dates, format_date, split_by_char_limit
 
 # TODO: Organize things to be able to use the same commands or code to run standalone puzzle challenges unrelated to
 #       any tournament, e.g. puzzle-of-the-week/month, behaving like a standalone tournament round
@@ -765,9 +765,10 @@ class TournamentAdmin(BaseTournament):
                 await new_description_file.save(round_dir / 'description.txt')
 
             # Update and move the round directory
-            old_round_dir = tournament_dir / round_metadata['dir']
+            old_round_dir = round_dir
             round_metadata['dir'] = f"{slugify(round_metadata['round_name'])}_{slugify(new_puzzle_name)}"
-            shutil.move(old_round_dir, tournament_dir / round_metadata['dir'])
+            round_dir = tournament_dir / round_metadata['dir']
+            shutil.move(old_round_dir, round_dir)
 
             # Update the tournament metadata
             with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
@@ -789,29 +790,35 @@ class TournamentAdmin(BaseTournament):
                 with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
                     participants = json.load(f)
 
-                # Construct a name:id dict for quicker lookups by name
-                # TODO: This won't play nice with teams, need name -> list_of_ids
-                name_to_id = {d['name']: d['id'] for d in participants.values() if 'name' in d}
+                # Construct a name: IDs dict for quicker lookups by name
+                with open(round_dir / 'teams.json') as f:
+                    teams = json.load(f)
+                name_to_ids = {d['name']: [d['id']] for d in participants.values() if 'name' in d}
+                name_to_ids.update({team_name: [participants[tag]['id'] for tag in tags]
+                                   for team_name, tags in teams.items()})
                 non_discord_players = set()
 
-                for player_name in invalid_soln_authors:
-                    if player_name in name_to_id:
-                        user = await self.bot.fetch_user(name_to_id[player_name])
-                        await user.send(
-                            f"{old_round_name}, {puzzle_name} has been updated and one or more of your submissions"
-                            " were invalidated by the change! Please check"
-                            f' `!tournament-list-submissions {round_metadata["round_name"]}` and update/re-submit'
-                            " any missing solutions as needed.")
+                for submit_name in invalid_soln_authors:
+                    if submit_name in name_to_ids:
+                        for discord_id in name_to_ids[submit_name]:
+                            user = await self.bot.fetch_user(discord_id)
+                            await user.send(
+                                f"{old_round_name}, {puzzle_name} has been updated and one or more of your submissions"
+                                " were invalidated by the change! Please check"
+                                f' `!tournament-list-submissions {round_metadata["round_name"]}` and update/re-submit'
+                                " any missing solutions as needed.")
                     else:
-                        non_discord_players.add(player_name)
+                        non_discord_players.add(submit_name)
 
                 # Warn the TO of any solutions for whom the authors couldn't be found on discord (e.g. added by the
                 # TO submit backdoor)
                 if non_discord_players:
-                    await ctx.send("Warning: The following authors could not be DM'd about their invalid submissions"
-                                   " since they have no associated discord account (you probably submitted for them):"
-                                   ", ".join(f"`{name}`" for name in non_discord_players) + "."
-                                                                                            "\nConsider contacting these players to inform them of their invalidated solution(s).")
+                    warn = "Warning: The following authors could not be DM'd about their invalid submissions" \
+                           + " since they have no associated discord account (you probably submitted for them): " \
+                           + ", ".join(f"`{name}`" for name in non_discord_players) + "." \
+                           + "\nConsider contacting these players to inform them of their invalidated solution(s)."
+                    for i, msg_string in enumerate(split_by_char_limit(warn, 1999)):
+                        await ctx.send(msg_string)
 
         await ctx.send(f"Updated {', '.join(updated_fields)} for {round_metadata['round_name']}, {puzzle_name}")
 

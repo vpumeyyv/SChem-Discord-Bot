@@ -118,6 +118,7 @@ class TournamentSubmit(BaseTournament):
 
     # TODO: Give the bot permission to delete !tournament-submit messages from public channels
     #       since someone will inevitably forget to use DMs
+    # TODO: Kick host submit backdoor into own command and merge code with submit_fun
     @commands.command(name='tournament-submit', aliases=['ts'])
     @commands.dm_only()
     async def tournament_submit(self, ctx, *, comment=""):
@@ -284,7 +285,6 @@ class TournamentSubmit(BaseTournament):
         soln_str = (await self.parse_solution_attachment(ctx.message.attachments[0]))[0]
 
         level_name, author, expected_score, soln_name = schem.Solution.parse_metadata(soln_str)
-        soln_descr = schem.Solution.describe(level_name, author, expected_score, soln_name)
 
         # Check the round exists and the message is within its submission period
         self.verify_round_submission_time(ctx.message, tournament_metadata, level_name)
@@ -293,7 +293,11 @@ class TournamentSubmit(BaseTournament):
         round_dir = tournament_dir / round_metadata['dir']
 
         # Register or verify this participant's nickname
-        self.add_or_check_player(round_dir, ctx.message.author, author)
+        team_name = self.add_or_check_player(round_dir, ctx.message.author, author)
+
+        # Change the author name if the submitter is part of a team
+        if team_name is not None:
+            author = team_name
 
         # Prefix the solution name with "[author] " for readability on import
         soln_name = f"[{author}]" if soln_name is None else f"[{author}] {soln_name}"
@@ -309,6 +313,7 @@ class TournamentSubmit(BaseTournament):
 
             # Verify the solution
             # TODO: Provide seconds or minutes ETA based on estimate of 2,000,000 cycles / min (/ reactor?)
+            soln_descr = schem.Solution.describe(level_name, author, expected_score, soln_name)
             msg = await ctx.send(f"Running {soln_descr}, this should take < 30s barring an absurd cycle count...")
 
             solution = schem.Solution(level, soln_str)
