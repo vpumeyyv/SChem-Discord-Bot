@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
+from datetime import timezone
 import os
 
 import discord
@@ -9,6 +10,7 @@ from discord.ext import commands
 import schem
 
 from tournament import Tournament
+from utils import format_date
 
 TOKEN = os.getenv('SCHEM_BOT_DISCORD_TOKEN')
 MAINTAINER_DISCORD_ID = int(os.getenv('SCHEM_BOT_MAINTAINER_DISCORD_ID'))
@@ -35,7 +37,14 @@ async def on_command_error(ctx, error):
     if isinstance(error, (commands.CommandNotFound, commands.CheckFailure, commands.ChannelNotReadable)):
         return  # Avoid logging errors when users put in invalid commands
 
-    print(f"{type(error).__name__}: {error}")
+    # Log the error
+    log_error = f"{format_date(str(ctx.message.created_at.replace(tzinfo=timezone.utc)))} by {ctx.message.author}:"
+    log_error += f"\n{ctx.message.content}"
+    if ctx.message.attachments:
+        log_error += f" (+{len(ctx.message.attachments)} attachment(s))"
+    log_error += f"\n{type(error).__name__}: {error}"
+    print(log_error)
+
     await ctx.send(str(error))  # Probably bad practice but it makes the commands' code nice...
 
 @bot.command(name='about')

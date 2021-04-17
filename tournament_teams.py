@@ -71,6 +71,8 @@ class TournamentTeams(BaseTournament):
     async def tournament_create_team(self, ctx, team_name, from_round, *players: discord.User):
         """Create a tournament team from the given discord users.
 
+        If the team name already exists, members will be added or removed to match the given new list.
+
         team_name: The name of the team.
         from_round: The name of a puzzle/round. The selected players will be put in a
                     team for all rounds starting from the given round's start date.
