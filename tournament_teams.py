@@ -21,6 +21,8 @@ class TournamentTeams(BaseTournament):
     async def tournament_teams(self, ctx, *, round_or_puzzle_name):
         """List all teams formed for the specified puzzle or round name.
 
+        Note that this does not actually ping the mentioned users.
+
         round_or_puzzle_name: (Case-insensitive) Return teams in the matching round/puzzle.
                               A string like r10 will also match "Round 10" as a shortcut.
         """
