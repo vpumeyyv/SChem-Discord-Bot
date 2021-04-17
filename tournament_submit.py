@@ -437,9 +437,12 @@ class TournamentSubmit(BaseTournament):
         if submit_name is None:
             raise Exception("You have no current submissions to this round.")
 
-        # If the user passes an empty string, interpret it as an unnamed solution
+        # If the user passes no name or an empty string, interpret as an unnamed solution (which we store as "[author]")
         if not soln_name:
-            soln_name = None
+            soln_name = f"[{submit_name}]"
+        elif not soln_name.startswith(f"[{submit_name}]"):  # No space so the error is legible if they messed up prefixing it themselves
+            # Auto-prepend the author name we prefix onto submissions, if the user did not
+            soln_name = f"[{submit_name}] " + soln_name
 
         # Prevent removal from a round whose results have already been published
         if 'end_post' in round_metadata:
