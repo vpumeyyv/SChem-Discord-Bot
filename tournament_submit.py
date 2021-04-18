@@ -219,8 +219,10 @@ class TournamentSubmit(BaseTournament):
                                     await ctx.message.add_reaction('⚠')
 
                                     confirm_msg = await ctx.send(
-                                        "Warning: This solution regresses your last submission's metric score, previously: "
-                                        + str(round(old_metric_score, 3)))
+                                        "Warning: This solution regresses your last submission's metric score,"
+                                        f"previously: {round(old_metric_score, 3)}"
+                                        "\nAre you sure you wish to continue?"
+                                        " React with ✅ within 30 seconds to proceed, ❌ to cancel all changes.")
                                     if not await self.wait_for_confirmation(ctx, confirm_msg):
                                         await ctx.message.add_reaction('❌')
                                         return
