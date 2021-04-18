@@ -141,6 +141,9 @@ class TournamentAdmin(BaseTournament):
             with open(tournament_dir / 'participants.json', 'w', encoding='utf-8') as f:
                 json.dump({}, f, ensure_ascii=False, indent=4)
 
+            with open(tournament_dir / 'teams.json', 'w', encoding='utf-8') as f:
+                json.dump({}, f, ensure_ascii=False, indent=4)
+
             with open(tournament_dir / 'standings.json', 'w', encoding='utf-8') as f:
                 json.dump({'rounds': {}, 'total': {}}, f, ensure_ascii=False, indent=4)
 
@@ -441,8 +444,10 @@ class TournamentAdmin(BaseTournament):
                 (round_dir / 'description.txt').touch()
             (round_dir / 'solutions.txt').touch()
             (round_dir / 'solutions_fun.txt').touch()
-            with open(round_dir / 'teams.json', 'w', encoding='utf-8') as f:
-                json.dump({}, f, ensure_ascii=False, indent=4)
+
+            # Copy the currently-active teams from the tournament directory
+            shutil.copy(tournament_dir / 'teams.json', round_dir / 'teams.json')
+
             with open(round_dir / 'submissions_history.json', 'w', encoding='utf-8') as f:
                 json.dump({}, f, ensure_ascii=False, indent=4)
 

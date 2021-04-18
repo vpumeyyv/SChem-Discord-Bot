@@ -100,6 +100,7 @@ class BaseTournament(commands.Cog):
     #     slugified_tournament_name_1/
     #         tournament_metadata.json -> name, host, etc, + round dirs / metadata
     #         participants.json        -> discord_tag: discord_id, nickname
+    #         teams.json               -> team_name: [discord_tags]  # The 'current' teams (applies to newly-added puzzles)
     #         standings.json           -> 'rounds': {puzzle_name: {player: score}}, 'total': {player: score}
     #         bonus1_puzzleA/
     #         round1_puzzleB/
