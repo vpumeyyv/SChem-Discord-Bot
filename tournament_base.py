@@ -306,10 +306,14 @@ class BaseTournament(commands.Cog):
         return ranked_rows
 
     @staticmethod
-    def table_str(headers, rows, max_col_width=15):
+    def table_str(headers, rows, *, max_col_widths=None):
         """Given an iterable of column headers and list of rows containing strings or numeric types, return a
         pretty-print string table with appropriate column widths.
         """
+        # Default width is 15
+        if max_col_widths is None:
+            max_col_widths = [15]*len(headers)
+
         # Prepend the header row and convert all given values to formatted strings
         formatted_rows = [headers] + [[x if isinstance(x, str) else str(round(x, 3)) for x in row]
                                       for row in rows]
@@ -317,8 +321,8 @@ class BaseTournament(commands.Cog):
         # Truncate values over max col width
         for row in formatted_rows:
             for i in range(len(row)):
-                if len(row[i]) > max_col_width:
-                    row[i] = row[i][:max_col_width - 1] + '…'  # The ellipses unicode char
+                if len(row[i]) > max_col_widths[i]:
+                    row[i] = row[i][:max_col_widths[i] - 1] + '…'  # The ellipses unicode char
 
         # Get the minimum width of each column
         min_widths = [max(map(len, col)) for col in zip(*formatted_rows)]  # Sorry future reader
@@ -612,7 +616,8 @@ class BaseTournament(commands.Cog):
                               for soln in fun_solutions]
 
             msg_strings.extend(self.table_msgs(title_line="**Non-Scoring Submissions**",
-                                               table_text=self.table_str(fun_col_headers, fun_table_rows)))
+                                               table_text=self.table_str(fun_col_headers, fun_table_rows,
+                                                                         max_col_widths=[15, 15, 50])))
 
             attachments.append(discord.File(str(fun_solns_file), filename=fun_solns_file.name))
 
