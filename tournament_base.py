@@ -261,9 +261,9 @@ class BaseTournament(commands.Cog):
         return schem.Level(level_code)
 
     @staticmethod
-    def get_submit_history(round_dir, authors=None):
+    def get_submit_history(round_dir, authors=None, sort_by_date=False):
         """Return a string of a round's submission history. If authors specified, concatenate and return only their
-        histories in the given order.
+        histories in the given order. If sort_by_date is True, sort all lines by date instead of grouping by author.
         """
         # Convert the submission history to a more readable text file and attach it
         with open(round_dir / 'submissions_history.json', 'r', encoding='utf-8') as f:
@@ -272,19 +272,22 @@ class BaseTournament(commands.Cog):
         if authors is None:
             authors = submissions_history.keys()
 
-        submissions_history_str = ""
+        submission_rows = []
         for author in authors:
-            if author not in submissions_history:
-                continue
+            if author in submissions_history:
+                submission_rows.extend([[author] + list(submission) for submission in submissions_history[author]])
 
-            submissions = submissions_history[author]
-            for submit_time, score, metric, soln_name, comment in submissions:
-                submission_str = f"{author}: {format_date(submit_time)} - {score} - {round(metric, 3)}"
-                if soln_name is not None:
-                    submission_str += f' "{soln_name}"'
-                if comment is not None:
-                    submission_str += f' {comment}'
-                submissions_history_str += submission_str + '\n'
+        if sort_by_date:
+            submission_rows.sort(key=lambda x: x[1])
+
+        submissions_history_str = ""
+        for author, submit_time, score, metric, soln_name, comment in submission_rows:
+            submission_str = f"{author}: {format_date(submit_time)} - {score} - {round(metric, 3)}"
+            if soln_name is not None:
+                submission_str += f' "{soln_name}"'
+            if comment is not None:
+                submission_str += f' {comment}'
+            submissions_history_str += submission_str + '\n'
 
         return submissions_history_str
 

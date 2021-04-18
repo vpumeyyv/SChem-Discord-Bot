@@ -107,29 +107,36 @@ class TournamentInfo(BaseTournament):
                       your submissions history for.
                       A string like r10 will also match "Round 10" as a shortcut.
         """
+        is_host = is_tournament_host(ctx)
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=False)
         puzzle_name = self.get_puzzle_name(tournament_metadata, round_or_puzzle_name,
-                                           is_host=is_tournament_host(ctx), missing_ok=False)
+                                           is_host=is_host, missing_ok=False)
         round_metadata = tournament_metadata['rounds'][puzzle_name]
         round_dir = tournament_dir / round_metadata['dir']
 
-        # Get all names the player might have submitted under
-        tag = str(ctx.message.author)
-        past_submit_names = []
+        if not is_host:
+            # Get all names the player might have submitted under
+            tag = str(ctx.message.author)
+            past_submit_names = []
 
-        # Nickname
-        with open(tournament_dir / 'participants.json', encoding='utf-8') as f:
-            participants = json.load(f)
-        if tag in participants and 'name' in participants[tag]:
-            past_submit_names.append(participants[tag]['name'])
+            # Nickname
+            with open(tournament_dir / 'participants.json', encoding='utf-8') as f:
+                participants = json.load(f)
+            if tag in participants and 'name' in participants[tag]:
+                past_submit_names.append(participants[tag]['name'])
 
-        # Team name
-        team_name = self.get_team_name(round_dir, ctx.message.author)
-        if team_name is not None:
-            past_submit_names.append(team_name)
+            # Team name
+            team_name = self.get_team_name(round_dir, ctx.message.author)
+            if team_name is not None:
+                past_submit_names.append(team_name)
 
-        # Get the submission history as a text file and attach it
-        submit_history_str = self.get_submit_history(round_dir, authors=past_submit_names)
+            # Get the submission history as a text string
+            submit_history_str = self.get_submit_history(round_dir, authors=past_submit_names)
+        else:
+            # If the TO is using this, show all submissions to the given puzzle, sorted by date
+            submit_history_str = self.get_submit_history(round_dir, sort_by_date=True)
+
+        # Attach the submission history as a file
         if submit_history_str:
             with io.StringIO() as f:
                 f.write(submit_history_str)
