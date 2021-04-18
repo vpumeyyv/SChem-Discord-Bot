@@ -57,22 +57,6 @@ class TournamentTeams(BaseTournament):
                         for team_name, tags in teams.items()),
             allowed_mentions=discord.AllowedMentions(users=False))
 
-    def remove_submissions_by(self, round_dir: Path, puzzle_name: str, authors: set):
-        """Remove all submissions from the given round that match any of the given authors."""
-        with self.puzzle_submission_locks[puzzle_name]:
-            for solns_file in (round_dir / 'solutions.txt', round_dir / 'solutions_fun.txt'):
-                with open(solns_file, encoding='utf-8') as f:
-                    solns_str = f.read()
-
-                new_soln_strs = []
-                for soln_str in schem.Solution.split_solutions(solns_str):
-                    _, author, _, _ = schem.Solution.parse_metadata(soln_str)
-                    if author not in authors:
-                        new_soln_strs.append(soln_str)
-
-                with open(solns_file, 'w', encoding='utf-8') as f:
-                    f.write('\n'.join(new_soln_strs))
-
     @commands.command(name='tournament-team-add', aliases=['tta', 'tournament-add-team', 'tat',
                                                            'tournament-team-create', 'tournament-create-team'])
     @is_host
@@ -216,9 +200,9 @@ class TournamentTeams(BaseTournament):
         else:
             await ctx.send(f"Set team `{team_name}` for future rounds.")
 
-    @commands.command(name='tournament-team-remove', aliases=['ttr', 'tournament-remove-team', 'trt'])
+    @commands.command(name='tournament-team-delete', aliases=['ttd', 'tournament-delete-team', 'tdt'])
     @is_host
-    async def tournament_remove_team(self, ctx, team_name, from_round=None, only=None):
+    async def tournament_delete_team(self, ctx, team_name, from_round=None, only=None):
         """Dissolve a tournament team from the given round onwards.
 
         team_name: The name of the team to remove.
@@ -305,3 +289,100 @@ class TournamentTeams(BaseTournament):
             await ctx.send(f"Removed team `{team_name}` from {', '.join(f'`{r}`' for r in updated_rounds)} and future rounds.")
         else:
             await ctx.send(f"Removed team `{team_name}` from future rounds.")
+
+    @commands.command(name='tournament-team-rename', aliases=['ttr', 'tournament-rename-team', 'trt'])
+    @is_host
+    async def rename_team(self, ctx, team_name, new_team_name):
+        """Rename a team.
+
+        All players in the team (for any unclosed round) will be DM'd to inform them of the change.
+
+        team_name: The name of the team.
+        new_team_name: The new name of the team.
+        """
+        async with self.tournament_metadata_write_lock:
+            tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
+
+            with open(tournament_dir / 'participants.json', 'r', encoding='utf-8') as f:
+                participants = json.load(f)
+
+            # First make sure the new team name doesn't conflict with any player nicknames
+            if any(team_name == player_info['name'] for player_info in participants.values()
+                   if 'name' in player_info):
+                raise ValueError(f"`{team_name}` is already in use as a player's nickname.")
+
+            # Also make sure the new team name doesn't conflict with any team names from unclosed rounds
+            teams_dicts = {}
+            for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
+                # Ignore closed rounds
+                if 'end_post' not in round_metadata:
+                    round_dir = tournament_dir / round_metadata['dir']
+                    with open(round_dir / 'teams.json', encoding='utf-8') as f:
+                        teams_dicts[puzzle_name] = json.load(f)
+
+                    if new_team_name in teams_dicts[puzzle_name]:
+                        raise Exception(f"Team named `{new_team_name}` already exists in {round_metadata['round_name']}")
+
+            # Also check the ongoing teams
+            with open(tournament_dir / 'teams.json', encoding='utf-8') as f:
+                teams_dicts[None] = json.load(f)
+
+            if new_team_name in teams_dicts[None]:
+                raise Exception(f"Team named `{new_team_name}` already exists in ongoing teams.")
+
+            # Once we've confirmed there are no name conflicts, update the team name in all open and future rounds
+            discord_tags_to_dm = set()
+            for puzzle_name, round_metadata in tournament_metadata['rounds'].items():
+                # Ignore closed rounds
+                if 'end_post' in round_metadata:
+                    continue
+
+                round_dir = tournament_dir / round_metadata['dir']
+                teams = teams_dicts[puzzle_name]
+
+                if team_name not in teams:
+                    continue
+
+                # Update submissions and history
+                if 'start_post' in round_metadata:
+                    self.rename_submissions_by(round_dir, puzzle_name, team_name, new_team_name)
+                    self.rename_author_in_history(round_dir, puzzle_name, team_name, new_team_name)
+
+                # Update the teams json and re-sort by team name, case-insensitively
+                teams[new_team_name] = teams[team_name]
+                del teams[team_name]
+                teams = {k: teams[k] for k in sorted(teams, key=lambda s: s.lower())}
+
+                for tag in teams[new_team_name]:
+                    discord_tags_to_dm.add(tag)
+
+                with open(round_dir / 'teams.json', 'w', encoding='utf-8') as f:
+                    json.dump(teams, f, ensure_ascii=False, indent=4)
+
+            # Update the ongoing teams dict (the teams that get applied to newly-added puzzles)
+            teams = teams_dicts[None]
+
+            if team_name in teams:
+                teams[new_team_name] = teams[team_name]
+                del teams[team_name]
+                teams = {k: teams[k] for k in sorted(teams, key=lambda s: s.lower())}
+
+                for tag in teams[new_team_name]:
+                    discord_tags_to_dm.add(tag)
+
+                with open(tournament_dir / 'teams.json', 'w', encoding='utf-8') as f:
+                    json.dump(teams, f, ensure_ascii=False, indent=4)
+
+        if not discord_tags_to_dm:
+            raise Exception(f"No team `{team_name}` in current or future rounds.")
+
+        # DM the team members to let them know of the new name
+        with open(tournament_dir / 'participants.json', encoding='utf-8') as f:
+            participants = json.load(f)
+
+        for tag in discord_tags_to_dm:
+            player = await self.bot.fetch_user(participants[tag]['id'])
+            await player.send(f"The tournament host has renamed your team `{team_name}` to `{new_team_name}`.")
+
+        await ctx.send(f"Renamed team `{team_name}` to `{new_team_name}` in all open and future rounds,"
+                       " and DM'd all team members to inform them.")

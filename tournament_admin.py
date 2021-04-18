@@ -180,7 +180,7 @@ class TournamentAdmin(BaseTournament):
 
             parser = argparse.ArgumentParser(exit_on_error=False)
             parser.add_argument('--name')
-            parser.add_argument('--metametric')
+            #parser.add_argument('--metametric')  # TODO
             parser.add_argument('--start', '--start_date')
             parser.add_argument('--end', '--end_date')
 
@@ -211,8 +211,8 @@ class TournamentAdmin(BaseTournament):
             modified_open_round_ends = set()
 
             # TODO: Re-calculate previous rounds' scores based on metametric change
-            if args.metametric:
-                validate_metametric(args.metametric)
+            #if args.metametric:
+            #    validate_metametric(args.metametric)
 
             if args.start or args.end:
                 # Reformat and do basic checks on any changed date args (e.g. making sure end is after start)

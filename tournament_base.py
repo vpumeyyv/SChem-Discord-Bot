@@ -291,6 +291,66 @@ class BaseTournament(commands.Cog):
 
         return submissions_history_str
 
+    def remove_submissions_by(self, round_dir: Path, puzzle_name: str, authors: set):
+        """Remove all submissions from the given round that match any of the given authors."""
+        with self.puzzle_submission_locks[puzzle_name]:
+            for solns_file in (round_dir / 'solutions.txt', round_dir / 'solutions_fun.txt'):
+                with open(solns_file, encoding='utf-8') as f:
+                    solns_str = f.read()
+
+                new_soln_strs = []
+                for soln_str in schem.Solution.split_solutions(solns_str):
+                    _, author, _, _ = schem.Solution.parse_metadata(soln_str)
+                    if author not in authors:
+                        new_soln_strs.append(soln_str)
+
+                with open(solns_file, 'w', encoding='utf-8') as f:
+                    f.write('\n'.join(new_soln_strs))
+
+    def rename_submissions_by(self, round_dir: Path, puzzle_name: str, author: str, new_author: str):
+        """Update all submissions in the given round by the specified author, to the new author name."""
+        with self.puzzle_submission_locks[puzzle_name]:
+            for solns_file in (round_dir / 'solutions.txt', round_dir / 'solutions_fun.txt'):
+                with open(solns_file, encoding='utf-8') as f:
+                    solns_str = f.read()
+
+                new_soln_strs = []
+                for soln_str in schem.Solution.split_solutions(solns_str):
+                    level_name, cur_author, score, soln_name = schem.Solution.parse_metadata(soln_str)
+                    if cur_author == author:
+                        # A little smelly to need to know how SC formats it, but normally schem would want us to do this
+                        # via loading as Solution
+                        new_soln_name = soln_name.replace(f"[{author}]", f"[{new_author}]", 1)  # Replace prefix
+                        new_soln_strs.append(soln_str.replace(f"SOLUTION:{level_name},{author},{score},{soln_name}",
+                                                              f"SOLUTION:{level_name},{new_author},{score},{new_soln_name}",
+                                                              1))
+                    else:
+                        new_soln_strs.append(soln_str)
+
+                with open(solns_file, 'w', encoding='utf-8') as f:
+                    f.write('\n'.join(new_soln_strs))
+
+    def rename_author_in_history(self, round_dir: Path, puzzle_name: str, author: str, new_author: str):
+        """Update a submitter name (team or nickname) in the given round's submission history file."""
+        with self.puzzle_submission_locks[puzzle_name]:
+            with open(round_dir / 'submissions_history.json', encoding='utf-8') as f:
+                history = json.load(f)
+
+            assert new_author not in history, "Attempting rename in submissions history with already-in-use name."
+            if author not in history:
+                return
+
+            # Update the prefix on submitted solution names
+            for submission in history[author]:
+                if submission[3] is not None:
+                    submission[3] = submission[3].replace(f"[{author}]", f"[{new_author}]", 1)
+
+            history[new_author] = history[author]
+            del history[author]
+
+            with open(round_dir / 'submissions_history.json', 'w', encoding='utf-8') as f:
+                json.dump(history, f, ensure_ascii=False, indent=4)
+
     @staticmethod
     def sorted_and_ranked(rows, sort_idx=-1, desc=False):
         """Given an iterable of rows containing strings or numeric types, return a list of them sorted on the given
