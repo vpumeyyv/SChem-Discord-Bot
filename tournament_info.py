@@ -108,7 +108,8 @@ class TournamentInfo(BaseTournament):
                       A string like r10 will also match "Round 10" as a shortcut.
         """
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=False)
-        puzzle_name = self.get_puzzle_name(tournament_metadata, round_or_puzzle_name)
+        puzzle_name = self.get_puzzle_name(tournament_metadata, round_or_puzzle_name,
+                                           is_host=is_tournament_host(ctx), missing_ok=False)
         round_metadata = tournament_metadata['rounds'][puzzle_name]
         round_dir = tournament_dir / round_metadata['dir']
 

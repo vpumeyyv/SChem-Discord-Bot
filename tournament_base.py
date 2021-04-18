@@ -224,7 +224,7 @@ class BaseTournament(commands.Cog):
         return None
 
     @staticmethod
-    def get_puzzle_name(tournament_metadata, round_or_puzzle_name, is_host=False, missing_ok=True):
+    def get_puzzle_name(tournament_metadata, round_or_puzzle_name, is_host=False, missing_ok=False):
         """Given a string, return the puzzle name for any puzzle/round matching it case-insensitively.
 
         Also accept strings matching the first lowercase char of each word in the round name (or the whole word for

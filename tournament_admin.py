@@ -470,7 +470,8 @@ class TournamentAdmin(BaseTournament):
         await ctx.send(f"Successfully added {round_name} {level.name} to {tournament_metadata['name']}"
                        + f"\nPreview its announcement post with !tournament-info {round_name}")
 
-    @commands.command(name='tournament-puzzle-update', aliases=['tournament-puzzle-edit', 'tournament-update-puzzle',
+    @commands.command(name='tournament-puzzle-update', aliases=['tpu', 'tournament-puzzle-edit',
+                                                                'tournament-update-puzzle',
                                                                 'tournament-edit-puzzle'])
     @is_host
     async def update_puzzle(self, ctx, round_or_puzzle_name, *update_fields):  # TODO: public_explanation_blurb
