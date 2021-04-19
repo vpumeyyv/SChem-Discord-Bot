@@ -19,13 +19,14 @@ class TournamentTeams(BaseTournament):
 
     @commands.command(name='tournament-teams', aliases=['tt'])
     async def tournament_teams(self, ctx, *, round_or_puzzle_name=None):
-        """List all teams in the given round/puzzle, or else all open rounds.
+        """List all teams in the given round/puzzle. If not specified,
+        list all teams that are being persisted to future rounds.
 
         Note that this does not actually ping the mentioned users.
 
         round_or_puzzle_name: (Case-insensitive) Return teams in the matching round/puzzle.
                               A string like r10 will also match "Round 10" as a shortcut.
-                              If omitted, show teams for all open rounds.
+                              If omitted, list all teams that are being persisted to future rounds.
         """
         is_host = is_tournament_host(ctx)
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=is_host)
@@ -33,36 +34,28 @@ class TournamentTeams(BaseTournament):
         with open(tournament_dir / 'participants.json', encoding='utf-8') as f:
             participants = json.load(f)
 
-        if round_or_puzzle_name is None:
-            puzzle_names = [pn for pn, round_metadata in tournament_metadata['rounds'].items()
-                            if 'start_post' in round_metadata and 'end_post' not in round_metadata]
+        if not round_or_puzzle_name:
+            team_file = tournament_dir / 'teams.json'
+            label = 'Ongoing'
         else:
-            puzzle_names = [self.get_puzzle_name(tournament_metadata, round_or_puzzle_name,
-                                                 is_host=is_host, missing_ok=False)]
-
-        reply = ""
-        for puzzle_name in puzzle_names:
+            puzzle_name = self.get_puzzle_name(tournament_metadata, round_or_puzzle_name,
+                                               is_host=is_host, missing_ok=False)
             round_metadata = tournament_metadata['rounds'][puzzle_name]
-            round_dir = tournament_dir / round_metadata['dir']
+            team_file = tournament_dir / round_metadata['dir'] / 'teams.json'
+            label = round_metadata['round_name']
 
-            with open(round_dir / 'teams.json', encoding='utf-8') as f:
-                teams = json.load(f)
+        with open(team_file, encoding='utf-8') as f:
+            teams = json.load(f)
 
-            if not teams:
-                continue
-
-            reply += f"{round_metadata['round_name']} teams:\n" \
-                     + ''.join(f"  `{team_name}`: "
-                               + ', '.join(f"<@{participants[tag]['id']}> ("
-                                           + (f"`{participants[tag]['name']}`" if 'name' in participants[tag] else tag)
-                                           + ")"
-                                           for tag in tags) + "\n"
-                               for team_name, tags in teams.items())
-
-        if not reply:
-            reply = "No current teams."
-
-        await ctx.send(reply, allowed_mentions=discord.AllowedMentions(users=False))
+        await ctx.send(
+            f"{label} teams:\n"
+            + '\n'.join(f"  `{team_name}`: "
+                        + ', '.join(f"<@{participants[tag]['id']}> ("
+                                    + (f"`{participants[tag]['name']}`" if 'name' in participants[tag] else tag)
+                                    + ")"
+                                    for tag in tags)
+                        for team_name, tags in teams.items()),
+            allowed_mentions=discord.AllowedMentions(users=False))
 
     def remove_submissions_by(self, round_dir: Path, puzzle_name: str, authors: set):
         """Remove all submissions from the given round that match any of the given authors."""
@@ -86,7 +79,8 @@ class TournamentTeams(BaseTournament):
     async def tournament_create_team(self, ctx, team_name, from_round, *players: discord.User):
         """Create a tournament team from the given discord users.
 
-        If the team name already exists, members will be added or removed to match the given new list.
+        If the team name already exists, members will be added or removed to match the given new list (and the team's
+        submissions will not be removed).
 
         team_name: The name of the team.
         from_round: The name of an *open* puzzle/round, or an empty string (""). The
@@ -171,8 +165,9 @@ class TournamentTeams(BaseTournament):
                         if not teams[other_team_name]:
                             submit_names_to_remove.add(other_team_name)
 
-                # Add the new team
+                # Add the new team and re-sort by team name, case-insensitively
                 teams[team_name] = [str(player) for player in players]
+                teams = {k: teams[k] for k in sorted(teams, key=lambda s: s.lower())}
 
                 if 'start_post' in round_metadata:
                     # If the round is already open, summarize the changes and ask for confirmation
