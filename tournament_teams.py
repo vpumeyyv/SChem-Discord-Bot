@@ -3,11 +3,9 @@
 
 from datetime import datetime, timezone
 import json
-from pathlib import Path
 
 import discord
 from discord.ext import commands
-import schem
 
 from tournament_base import BaseTournament, is_tournament_host
 

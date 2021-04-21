@@ -88,7 +88,7 @@ class TournamentInfo(BaseTournament):
         # If this is the TO, preview the results post for them (in separate msgs so the embed goes on top)
         if is_host and not 'end_post' in round_metadata:
             await ctx.send(f"On {format_date(round_metadata['end'])} (+ 5 min for banter) the following announcement"
-                           "  will be sent:")
+                           " will be sent:")
 
             # Send each of the sub-2000 char announcement messages, adding the attachments to the last one
             msg_strings, attachments, _ = self.round_results_announcement_and_standings_change(tournament_dir, tournament_metadata, puzzle_name)

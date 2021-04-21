@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 import schem
 
 from metric import get_metric_and_terms, eval_metametric, get_metametric_term_values
+from stats import pareto_graph, metric_over_time
 from utils import split_by_char_limit, format_date, wait_until
 
 load_dotenv()
@@ -689,6 +690,22 @@ class BaseTournament(commands.Cog):
             f.write(self.get_submit_history(round_dir))
             f.seek(0)  # Reset file io position
             attachments.append(discord.File(f, filename='submissions_history.txt'))
+
+        # Create graphs from the submission history
+        with open(round_dir / 'submissions_history.json', 'r', encoding='utf-8') as f:
+            submissions_history = json.load(f)
+
+        # Generate interesting graphs from the submission history
+        pareto_file = round_dir / 'pareto.html'
+        pareto_graph(out_file=pareto_file, scoring_submit_history=submissions_history)
+        attachments.append(discord.File(str(pareto_file), filename=pareto_file.name))
+
+        metric_over_time_file = round_dir / 'metric_over_time.html'
+        metric_over_time(out_file=metric_over_time_file,
+                         scoring_submit_history=submissions_history,
+                         puzzle_start=round_metadata['start'],
+                         puzzle_end=round_metadata['end'])
+        attachments.append(discord.File(str(metric_over_time_file), filename=metric_over_time_file.name))
 
         return msg_strings, attachments, standings_scores
 
