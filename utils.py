@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 
 def split_by_char_limit(s, limit):
@@ -65,6 +65,19 @@ def format_date(s):
     friendly format.
     """
     return ' '.join(s[:16].split('T')) + ' UTC'  # Remove T and the seconds field, and replace '+00:00' with ' UTC'
+
+
+def format_timedelta(td: timedelta):
+    """Given a time delta, return a user-friendly string of days + hours if it is > 1 day, hours + mins
+    if it is > 1 min, or seconds if it is <= 1 min.
+    """
+    # Note that timedelta stores the time as days + seconds + microseconds internally
+    if td.days >= 1:
+        return f"{td.days} days, {td.seconds // 3600} hours"
+    elif td.seconds >= 60:
+        return f"{td.seconds // 3600} hours, {(td.seconds // 60) % 60} mins"
+    else:
+        return f"{td.seconds} seconds"
 
 
 async def wait_until(dt):

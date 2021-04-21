@@ -80,14 +80,8 @@ def pareto_graph(out_file: Path, scoring_submit_history, fun_submit_history=None
     plotly.offline.plot(fig, filename=str(out_file), show_link=False, auto_open=False)
 
 
-def metric_over_time(out_file: Path, scoring_submit_history, puzzle_start, puzzle_end, ignore_regressed=True):
-    """Create a plot showing the metric scores of all submitters over time.
-
-    ignore_regressed: If True (default), do not include metric scores lower than a later-submitted metric score.
-                      Quick way to ensure any rule-violating submissions that were corrected get ignored.
-    """
-    # TODO: Filter regressed submissions
-
+def metric_over_time(out_file: Path, scoring_submit_history, puzzle_start, puzzle_end):
+    """Create a plot showing the metric scores of all submitters over time."""
     # Add a line trace for each player's metric over time
     author_traces = []
     for author, submissions in scoring_submit_history.items():
