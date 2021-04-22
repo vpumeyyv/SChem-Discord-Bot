@@ -15,7 +15,6 @@ def pareto_graph(out_file: Path, scoring_submit_history, fun_submit_history=None
 
     Include toggleable lines tracing the optimization path of each player's scoring submissions.
     """
-
     # Create a scatter plot of symbols vs. cycles for all submissions
     combined_submissions = []
     for submissions in scoring_submit_history.values():
@@ -42,6 +41,8 @@ def pareto_graph(out_file: Path, scoring_submit_history, fun_submit_history=None
                             showlegend=False)
 
     # Overlay a line for each player showing the path their scoring submissions took
+    # TODO: Pass in teams info too, and in the case of teams formed partway through the round, connect their last
+    #       solo submissions up the first team submission
     author_traces = []
     for author, submissions in scoring_submit_history.items():
         scores = [Score.from_str(submission[1]) for submission in submissions]

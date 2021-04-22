@@ -78,7 +78,7 @@ class TournamentPlayers(BaseTournament):
                     round_dir = tournament_dir / round_metadata['dir']
 
                     # If they were submitting using their nickname, update the author on their submissions
-                    if self.get_team_name(round_dir, player) is None:
+                    if self.get_team_name(round_dir, tag) is None:
                         self.rename_submissions_by(round_dir, puzzle_name, old_nickname, new_nickname)
 
                     # Update the history file

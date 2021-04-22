@@ -81,9 +81,10 @@ class TournamentInfo(BaseTournament):
         embed = discord.Embed(title=f"{round_metadata['round_name']}, {puzzle_name}",
                               description=f"[Announcement]({round_metadata['start_post']})")
 
-        # Prevent non-TO users from accessing rounds that haven't ended or that the bot hasn't announced the results of yet
         if 'end_post' in round_metadata:
             embed.description += f" | [Results]({round_metadata['end_post']})"
+        else:
+            embed.description += f" {self.puzzle_deadline_str(round_metadata)}"
 
         await ctx.send(embed=embed)
 
@@ -128,7 +129,7 @@ class TournamentInfo(BaseTournament):
                 past_submit_names.append(participants[tag]['name'])
 
             # Team name
-            team_name = self.get_team_name(round_dir, ctx.message.author)
+            team_name = self.get_team_name(round_dir, tag)
             if team_name is not None:
                 past_submit_names.append(team_name)
 
@@ -136,7 +137,9 @@ class TournamentInfo(BaseTournament):
             submit_history_str = self.get_submit_history(round_dir, authors=past_submit_names)
         else:
             # If the TO is using this, show all submissions to the given puzzle, sorted by date
-            submit_history_str = self.get_submit_history(round_dir, sort_by_date=True)
+            # We also need to show them raw timestamps so they can give a sufficiently precise argument to
+            # !tournament-submission-delete
+            submit_history_str = self.get_submit_history(round_dir, sort_by_date=True, raw_timestamps=True)
 
         # Attach the submission history as a file
         if submit_history_str:

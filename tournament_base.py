@@ -212,12 +212,11 @@ class BaseTournament(commands.Cog):
             return None
 
     @staticmethod
-    def get_team_name(round_dir: Path, discord_user: discord.User):
+    def get_team_name(round_dir: Path, discord_tag: str):
         """Given a discord user, return their team name for the given round or else None."""
         with open(round_dir / 'teams.json', encoding='utf-8') as f:
             teams = json.load(f)
 
-        discord_tag = str(discord_user)
         for team_name, tags in teams.items():
             if discord_tag in tags:
                 return team_name
@@ -271,7 +270,7 @@ class BaseTournament(commands.Cog):
         return "Deadline has passed"
 
     @staticmethod
-    def get_submit_history(round_dir, authors=None, sort_by_date=False):
+    def get_submit_history(round_dir, authors=None, sort_by_date=False, raw_timestamps=False):
         """Return a string of a round's submission history. If authors specified, concatenate and return only their
         histories in the given order. If sort_by_date is True, sort all lines by date instead of grouping by author.
         """
@@ -292,7 +291,7 @@ class BaseTournament(commands.Cog):
 
         submissions_history_str = ""
         for author, submit_time, score, metric, soln_name, comment in submission_rows:
-            submission_str = f"{author}: {format_date(submit_time)} - {score} - {round(metric, 3)}"
+            submission_str = f"{author}: {submit_time if raw_timestamps else format_date(submit_time)} - {score} - {round(metric, 3)}"
             if soln_name is not None:
                 submission_str += f' "{soln_name}"'
             if comment is not None:

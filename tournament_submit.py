@@ -17,6 +17,8 @@ from tournament_base import BaseTournament, is_tournament_host
 class TournamentSubmit(BaseTournament):
     """Submission-related tournament commands and utils."""
 
+    is_host = commands.check(is_tournament_host)
+
     @staticmethod
     async def parse_solution_attachment(attachment: discord.Attachment, is_host=False):
         """Given a discord Attachment expected to be a solution file, return a list of its solutions.
@@ -390,7 +392,7 @@ class TournamentSubmit(BaseTournament):
                 indent = '    '
 
             # Identify the name their submissions are stored under, accounting for this round's teams
-            team_name = self.get_team_name(round_dir, ctx.message.author)
+            team_name = self.get_team_name(round_dir, str(ctx.message.author))
             submit_name = team_name if team_name is not None else nickname
             if submit_name is None:
                 reply += f"\n{indent}No submissions."
@@ -453,7 +455,7 @@ class TournamentSubmit(BaseTournament):
         round_dir = tournament_dir / round_metadata['dir']
 
         nickname = self.get_player_name(tournament_dir, ctx.message.author)
-        team_name = self.get_team_name(round_dir, ctx.message.author)
+        team_name = self.get_team_name(round_dir, str(ctx.message.author))
         submit_name = team_name if team_name is not None else nickname
         if submit_name is None:
             raise Exception("You have no current submissions to this round.")
@@ -507,4 +509,99 @@ class TournamentSubmit(BaseTournament):
     #         solutions are rejected and requested to be sent directly to the tournament host
     #       - limit user submissions to like 2 per minute
 
-    # TODO tournament-name-change
+    @commands.command(name='tournament-submission-delete', aliases=['tsd', 'tournament-delete-submission', 'tds'])
+    @is_host
+    async def delete_submission(self, ctx, round_or_puzzle_name, submit_name, submit_time, *, reason=None):
+        """Delete a scoring submission from the active solutions and submit history.
+
+        If the target is the player's active scoring submission, the `reason` arg must
+        be included, and will be included in a DM to the player informing them of the
+        deleted submission.
+        Only intended for use on submissions that violate a puzzle rule.
+        Deleting from history too is done to ensure that results graphs are not
+        skewed by the rule-violating score.
+
+        round_or_puzzle_name: (Case-insensitive) The round/puzzle name of the submission.
+                              A string like r10 will also match "Round 10" as a shortcut.
+        submit_name: The team/player nickname the solution appears under in !history.
+        submit_time: The ISO format datetime exactly matching that displayed in the
+                     submission's !history entry.
+        reason: Required if the submission is the player's active submission.
+                A brief comment explaining the reason for the removal
+                E.g. "Violates 'must run forever' rule.".
+        """
+        tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
+        puzzle_name = self.get_puzzle_name(tournament_metadata, round_or_puzzle_name, is_host=True, missing_ok=False)
+        round_metadata = tournament_metadata['rounds'][puzzle_name]
+        round_dir = tournament_dir / round_metadata['dir']
+
+        if 'start_post' not in round_metadata or 'end_post' in round_metadata:
+            raise Exception(f"Cannot modify submissions on non-open round {round_metadata['round_name']}.")
+
+        affected_discord_ids = set()
+        with self.puzzle_submission_locks[puzzle_name]:
+            with open(round_dir / 'submissions_history.json', encoding='utf-8') as f:
+                submit_history = json.load(f)
+
+            if submit_name not in submit_history:
+                raise Exception(f"No submitter named `{submit_name}` in {round_metadata['round_name']}.")
+
+            submission_idx = next((i for i, (timestamp, *_) in enumerate(submit_history[submit_name])
+                                   if timestamp == submit_time),
+                                  None)
+            if submission_idx is None:
+                raise Exception(f"No submission with timestamp `{submit_time}`"
+                                f" in {round_metadata['round_name']} scoring submission history")
+
+            del submit_history[submit_name][submission_idx]
+
+            # If this was their latest submission under their current submit name, remove it from solutions.txt
+            if submission_idx == len(submit_history[submit_name]):  # No -1 as history length just decreased by 1
+                # Note that if we just removed a submission of theirs or if this was their last solo submission
+                # before being put in a team, solutions.txt may still be empty, in which case we should not DM them
+                with open(round_dir / 'solutions.txt', encoding='utf-8') as f:
+                    solns_str = f.read()
+
+                soln_strs = list(schem.Solution.split_solutions(solns_str))
+                soln_idx = next((i for i, soln_str in enumerate(soln_strs)
+                                 if schem.Solution.parse_metadata(soln_str)[1] == submit_name),
+                                None)
+
+                if soln_idx is not None:
+                    assert reason is not None, "`reason` arg must be given if submission is player's latest"
+
+                    del soln_strs[soln_idx]
+                    with open(round_dir / 'solutions.txt', 'w', encoding='utf-8') as f:
+                        f.write('\n'.join(soln_strs))
+
+                    # Find the ID's of all players we need to DM
+                    with open(tournament_dir / 'participants.json', encoding='utf-8') as f:
+                        players = json.load(f)
+                    with open(round_dir / 'teams.json', encoding='utf-8') as f:
+                        teams = json.load(f)
+
+                    if submit_name in teams:
+                        affected_discord_ids.update(players[tag]['id'] for tag in teams[submit_name])
+                    else:
+                        # If next() fails below there'd be a ghost submission so I'm happy to let it
+                        affected_discord_ids.add(next(d['id'] for tag, d in players.items()
+                                                      if 'name' in d and d['name'] == submit_name))
+
+                    # DM the relevant players
+                    for discord_id in affected_discord_ids:
+                        user = await self.bot.fetch_user(discord_id)
+                        await user.send(
+                            f"The TO has deleted your scoring submission to {round_metadata['round_name']} (`{puzzle_name}`)."
+                            f'\nReason: "{reason}"'
+                            "\nPlease submit a new scoring solution accordingly.")
+
+            with open(round_dir / 'submissions_history.json', 'w', encoding='utf-8') as f:
+                json.dump(submit_history, f, ensure_ascii=False, indent=4)
+
+        if affected_discord_ids:
+            await ctx.send("Removed submission from history and solutions.txt, and DM'd "
+                           + ', '.join(f'<@{d_id}>' for d_id in affected_discord_ids)
+                           + " to inform them.",
+                           allowed_mentions=discord.AllowedMentions(users=False))
+        else:
+            await ctx.send("Removed submission from history.")
