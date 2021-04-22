@@ -30,7 +30,7 @@ def pareto_graph(out_file: Path, scoring_submit_history, fun_submit_history=None
                             y=tuple(x.cycles for x in scores),
                             marker=dict(
                                 color='black',
-                                size=5,
+                                size=7,
                                 line=dict(width=0.5)),  # The thickness of the node's border line
                             hoverinfo='text',
                             hoverlabel=dict(align='left'),
@@ -47,14 +47,14 @@ def pareto_graph(out_file: Path, scoring_submit_history, fun_submit_history=None
     for author, submissions in scoring_submit_history.items():
         scores = [Score.from_str(submission[1]) for submission in submissions]
         author_traces.append(
-            go.Scatter(mode='lines',
+            go.Scatter(mode='lines+markers',
                        name=author,
                        x=tuple(score.symbols for score in scores),
                        y=tuple(score.cycles for score in scores),
-                       line=dict(width=0.5),
-                       marker=dict(size=5,
-                                   line=dict(width=0.5)),  # The thickness of the node's border line
-                       hoverinfo='none'))
+                       line=dict(width=0.75),
+                       marker=dict(symbol='circle-open', size=9, line=dict(width=2)),  # Circle the node
+                       hoverinfo='none',
+                       visible='legendonly'))  # Start with all lines turned off in the legend since they can look messy
 
     # TODO: Add lines showing the pareto frontier globally and by reactor count
 
@@ -63,6 +63,7 @@ def pareto_graph(out_file: Path, scoring_submit_history, fun_submit_history=None
         title=dict(text="<b>Solution Space</b>",
                    font=dict(color='black', size=16),
                    x=0.5),
+        # Double-click to toggle all other traces is not usable as plotly has no way to stop the nodes from toggling too
         legend=dict(itemdoubleclick=False),
         hovermode='closest',  # Show hover text of node closest to the mouse position
         dragmode='pan',  # Default mouse mode
@@ -76,7 +77,7 @@ def pareto_graph(out_file: Path, scoring_submit_history, fun_submit_history=None
         xaxis=dict(title='Symbols', linecolor='black', ticks='outside', tickcolor='black'),
         yaxis=dict(title='Cycles', linecolor='black', ticks='outside', tickcolor='black'))
 
-    fig = go.Figure(data=[node_trace] + author_traces, layout=fig_layout)
+    fig = go.Figure(data=author_traces + [node_trace], layout=fig_layout)
 
     plotly.offline.plot(fig, filename=str(out_file), show_link=False, auto_open=False)
 
@@ -91,8 +92,8 @@ def metric_over_time(out_file: Path, scoring_submit_history, puzzle_start, puzzl
                        name=author,
                        x=tuple(submission[0] for submission in submissions),  # Submit date
                        y=tuple(submission[2] for submission in submissions),  # metric
-                       line=dict(width=0.5),
-                       marker=dict(size=5,
+                       line=dict(width=0.75),
+                       marker=dict(size=7,
                                    line=dict(width=0.5)),  # The thickness of the node's border line
                        hoverinfo='text',
                        hoverlabel=dict(align='left'),
