@@ -154,7 +154,7 @@ class TournamentAdmin(BaseTournament):
 
         await ctx.send(f"Successfully created {repr(name)}")
 
-    @commands.command(name='tournament-update', aliases=['tournament-edit'])
+    @commands.command(name='tournament-update', aliases=['tu', 'tournament-edit', 'te'])
     @is_host
     async def tournament_update(self, ctx, *update_fields):
         """Update the current/pending tournament.

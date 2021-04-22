@@ -59,24 +59,12 @@ class TournamentInfo(BaseTournament):
                 for standings_msg in self.table_msgs(title_line="**Standings**",
                                                      table_text=self.standings_str(tournament_dir)):
                     await ctx.send(standings_msg)
-            else:
-                # Preview the tournament announcement post
-                await ctx.send(f"On {format_date(tournament_metadata['start'])} the following announcement will be sent:")
-                for msg_string in self.tournament_announcement(tournament_dir, tournament_metadata):
-                    await ctx.send(msg_string)
 
             return
 
         # Convert to puzzle name
         puzzle_name = self.get_puzzle_name(tournament_metadata, round_or_puzzle_name, is_host=is_host, missing_ok=False)
         round_metadata = tournament_metadata['rounds'][puzzle_name]
-
-        if is_host and 'start_post' not in round_metadata:
-            # If this is the host checking an unannounced puzzle, simply preview the announcement post for them
-            await ctx.send(f"On {format_date(round_metadata['start'])} the following announcement will be sent:")
-            embed, attachment = self.round_announcement(tournament_dir, tournament_metadata, puzzle_name)
-            await ctx.send(embed=embed, file=attachment)
-            return
 
         embed = discord.Embed(title=f"{round_metadata['round_name']}, {puzzle_name}",
                               description=f"[Announcement]({round_metadata['start_post']})")
@@ -87,19 +75,6 @@ class TournamentInfo(BaseTournament):
             embed.description += f" {self.puzzle_deadline_str(round_metadata)}"
 
         await ctx.send(embed=embed)
-
-        # If this is the TO, preview the results post for them (in separate msgs so the embed goes on top)
-        if is_host and not 'end_post' in round_metadata:
-            await ctx.send(f"On {format_date(round_metadata['end'])} (+ 5 min for banter) the following announcement"
-                           " will be sent:")
-
-            # Send each of the sub-2000 char announcement messages, adding the attachments to the last one
-            msg_strings, attachments, _ = self.round_results_announcement_and_standings_change(tournament_dir, tournament_metadata, puzzle_name)
-            for i, msg_string in enumerate(msg_strings):
-                if i < len(msg_strings) - 1:
-                    await ctx.send(msg_string)
-                else:
-                    await ctx.send(msg_string, files=attachments)
 
     @commands.command(name='tournament-submit-history', aliases=['tsh', 'sh', 'history'])
     @commands.dm_only()
@@ -151,10 +126,61 @@ class TournamentInfo(BaseTournament):
         else:
             await ctx.send(f"No past submissions to {round_metadata['round_name']}")
 
+    @commands.command(name='tournament-preview', aliases=['tp', 'announcement-preview', 'ap'])
+    @is_host
+    async def announcement_preview(self, ctx, round_or_puzzle_name=None, no_graphs=None):
+        """Preview the specified round/puzzle's announcement or results post, or the
+        tournament announcement post if unspecified.
+
+        round_or_puzzle_name: (Case-insensitive) The round to preview the next announcement for.
+                              A string like r10 will also match "Round 10" as a shortcut.
+                              If not specified, show the tournament start announcement.
+        no_graphs: If provided (any string works, e.g. no_graphs), do not generate the .html graphs while
+                   previewing a puzzle's results announcement. This saves about 2 seconds.
+        """
+        tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
+
+        if round_or_puzzle_name is None:
+            assert 'start_post' not in tournament_metadata, "Round/puzzle name required for previews during tournament."
+
+            # Preview the tournament announcement post
+            await ctx.send(f"On {format_date(tournament_metadata['start'])} the following announcement will be sent:")
+            for msg_string in self.tournament_announcement(tournament_dir, tournament_metadata):
+                await ctx.send(msg_string)
+
+            return
+
+        # Convert to puzzle name
+        puzzle_name = self.get_puzzle_name(tournament_metadata, round_or_puzzle_name, is_host=True, missing_ok=False)
+        round_metadata = tournament_metadata['rounds'][puzzle_name]
+
+        if 'start_post' not in round_metadata:
+            # Preview the puzzle start announcement post
+            await ctx.send(f"On {format_date(round_metadata['start'])} the following announcement will be sent:")
+            embed, attachment = self.round_announcement(tournament_dir, tournament_metadata, puzzle_name)
+            await ctx.send(embed=embed, file=attachment)
+            return
+
+        # Otherwise preview the puzzle results post
+        assert 'end_post' not in round_metadata, f"{round_metadata['round_name']} is already closed; nothing to preview."
+
+        await ctx.send(f"On {format_date(round_metadata['end'])} (+ 5 min for banter) the following announcement"
+                       " will be sent:")
+
+        # Send each of the sub-2000 char announcement messages, adding the attachments to the last one
+        msg_strings, attachments, _ = self.round_results_announcement_and_standings_change(
+                                          tournament_dir, tournament_metadata, puzzle_name, include_graphs=(no_graphs is None))
+        for i, msg_string in enumerate(msg_strings):
+            if i < len(msg_strings) - 1:
+                await ctx.send(msg_string)
+            else:
+                await ctx.send(msg_string, files=attachments)
+
     @commands.command(name='tournament-standings-preview', aliases=['tsp', 'tournament-preview-standings', 'tps'])
     @is_host
+    # TODO: round arg, only show standings if the specified round were added to current
     async def standings_preview(self, ctx):
-        """[TO-only] Preview the standings if all open rounds were tallied right now."""
+        """Preview the standings if all open rounds were tallied right now."""
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
 
         with open(tournament_dir / 'standings.json', 'r', encoding='utf-8') as f:

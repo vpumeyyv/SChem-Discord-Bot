@@ -588,9 +588,12 @@ class BaseTournament(commands.Cog):
         except Exception as e:
             print(e)
 
-    def round_results_announcement_and_standings_change(self, tournament_dir, tournament_metadata, puzzle_name):
+    def round_results_announcement_and_standings_change(self, tournament_dir, tournament_metadata, puzzle_name,
+                                                        include_graphs=True):
         """Given tournament dir/metadata and a specified puzzle, return a list of strings of the announcement message(s)
         text for the puzzle results, a list of attachments, and a dict indicating the point changes by player or team.
+
+        If include_graphs is false, skip generating the results graphs to speed things up.
         """
         round_metadata = tournament_metadata['rounds'][puzzle_name]
         round_dir = tournament_dir / round_metadata['dir']
@@ -700,20 +703,21 @@ class BaseTournament(commands.Cog):
             attachments.append(discord.File(f, filename='submissions_history.txt'))
 
         # Create graphs from the submission history
-        with open(round_dir / 'submissions_history.json', 'r', encoding='utf-8') as f:
-            submissions_history = json.load(f)
+        if include_graphs:
+            with open(round_dir / 'submissions_history.json', 'r', encoding='utf-8') as f:
+                submissions_history = json.load(f)
 
-        # Generate interesting graphs from the submission history
-        pareto_file = round_dir / 'pareto.html'
-        pareto_graph(out_file=pareto_file, scoring_submit_history=submissions_history)
-        attachments.append(discord.File(str(pareto_file), filename=pareto_file.name))
+            # Generate interesting graphs from the submission history
+            pareto_file = round_dir / 'pareto.html'
+            pareto_graph(out_file=pareto_file, scoring_submit_history=submissions_history)
+            attachments.append(discord.File(str(pareto_file), filename=pareto_file.name))
 
-        metric_over_time_file = round_dir / 'metric_over_time.html'
-        metric_over_time(out_file=metric_over_time_file,
-                         scoring_submit_history=submissions_history,
-                         puzzle_start=round_metadata['start'],
-                         puzzle_end=round_metadata['end'])
-        attachments.append(discord.File(str(metric_over_time_file), filename=metric_over_time_file.name))
+            metric_over_time_file = round_dir / 'metric_over_time.html'
+            metric_over_time(out_file=metric_over_time_file,
+                             scoring_submit_history=submissions_history,
+                             puzzle_start=round_metadata['start'],
+                             puzzle_end=round_metadata['end'])
+            attachments.append(discord.File(str(metric_over_time_file), filename=metric_over_time_file.name))
 
         return msg_strings, attachments, standings_scores
 
