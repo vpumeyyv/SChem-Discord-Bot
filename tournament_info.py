@@ -44,6 +44,8 @@ class TournamentInfo(BaseTournament):
                                          + f" [Announcement]({round_metadata['start_post']})"
                     if 'end_post' in round_metadata:
                         embed.description += f" | [Results]({round_metadata['end_post']})"
+                    else:
+                        embed.description += f" {self.puzzle_deadline_str(round_metadata)}"
                 elif is_host:
                     # Allow the TO to see schedule info on upcoming puzzles
                     embed.description += f"\n{round_metadata['round_name']}, {puzzle_name}:" \

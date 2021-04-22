@@ -12,7 +12,6 @@ import schem
 
 from metric import eval_metric
 from tournament_base import BaseTournament, is_tournament_host
-from utils import format_timedelta
 
 
 class TournamentSubmit(BaseTournament):
@@ -109,15 +108,6 @@ class TournamentSubmit(BaseTournament):
 
         return None
 
-    @staticmethod
-    def puzzle_deadline_str(round_metadata):
-        """Return a string describing how long remains until a puzzle deadline."""
-        remaining_time = datetime.fromisoformat(round_metadata['end']) - datetime.now(timezone.utc)
-        if remaining_time.total_seconds() > 0:
-            return f"Puzzle deadline is in {format_timedelta(remaining_time)}."
-
-        return "Puzzle deadline has passed."
-
     @commands.Cog.listener('on_message')
     async def tournament_submit_shortcut(self, msg):
         """Treat any non-command DM message containing an attachment(s) as a call to tournament-submit."""
@@ -198,7 +188,7 @@ class TournamentSubmit(BaseTournament):
                     soln_metric_score = eval_metric(solution, metric)
 
                     await msg.edit(content=f"Successfully validated {soln_descr}, metric score: {round(soln_metric_score, 3)}"
-                                           f"\n{self.puzzle_deadline_str(round_metadata)}")
+                                           f"\n{self.puzzle_deadline_str(round_metadata)}.")
 
                     # Update solutions.txt
                     # To ensure async-safe file-writing, we may need to read the file twice: the first time to ask
@@ -363,7 +353,7 @@ class TournamentSubmit(BaseTournament):
         # TODO: Update submissions_history.txt with time, name, score, and blurb
 
         await ctx.message.add_reaction('✅')
-        await msg.edit(content=f"{reply}\n{self.puzzle_deadline_str(round_metadata)}")
+        await msg.edit(content=f"{reply}\n{self.puzzle_deadline_str(round_metadata)}.")
 
     @commands.command(name='tournament-submissions-list', aliases=['tsl',
                                                                    'tournament-submissions',

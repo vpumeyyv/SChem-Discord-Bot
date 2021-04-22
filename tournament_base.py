@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 import io
 import json
 import os
@@ -15,7 +15,7 @@ import schem
 
 from metric import get_metric_and_terms, eval_metametric, get_metametric_term_values
 from stats import pareto_graph, metric_over_time
-from utils import split_by_char_limit, format_date, wait_until
+from utils import split_by_char_limit, format_date, format_timedelta, wait_until
 
 load_dotenv()
 
@@ -260,6 +260,15 @@ class BaseTournament(commands.Cog):
             level_code = f.read().strip()
 
         return schem.Level(level_code)
+
+    @staticmethod
+    def puzzle_deadline_str(round_metadata):
+        """Return a string describing how long remains until a puzzle deadline."""
+        remaining_time = datetime.fromisoformat(round_metadata['end']) - datetime.now(timezone.utc)
+        if remaining_time.total_seconds() > 0:
+            return f"Deadline in {format_timedelta(remaining_time)}"
+
+        return "Deadline has passed"
 
     @staticmethod
     def get_submit_history(round_dir, authors=None, sort_by_date=False):
