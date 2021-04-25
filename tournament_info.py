@@ -62,17 +62,22 @@ class TournamentInfo(BaseTournament):
 
             return
 
-        # Convert to puzzle name
+        # Convert to puzzle name (this also checks they have permission to view it)
         puzzle_name = self.get_puzzle_name(tournament_metadata, round_or_puzzle_name, is_host=is_host, missing_ok=False)
         round_metadata = tournament_metadata['rounds'][puzzle_name]
 
-        embed = discord.Embed(title=f"{round_metadata['round_name']}, {puzzle_name}",
-                              description=f"[Announcement]({round_metadata['start_post']})")
+        embed = discord.Embed(title=f"{round_metadata['round_name']}, {puzzle_name}")
 
-        if 'end_post' in round_metadata:
-            embed.description += f" | [Results]({round_metadata['end_post']})"
+        if 'start_post' in round_metadata:
+            embed.description = f"[Announcement]({round_metadata['start_post']})"
+
+            if 'end_post' in round_metadata:
+                embed.description += f" | [Results]({round_metadata['end_post']})"
+            else:
+                embed.description += f" {self.puzzle_deadline_str(round_metadata)}"
         else:
-            embed.description += f" {self.puzzle_deadline_str(round_metadata)}"
+            embed.description = f"Start: {format_date(round_metadata['start'])}" \
+                                + f" | End: {format_date(round_metadata['end'])}"
 
         await ctx.send(embed=embed)
 

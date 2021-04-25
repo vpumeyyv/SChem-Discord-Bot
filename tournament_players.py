@@ -15,7 +15,6 @@ class TournamentPlayers(BaseTournament):
     is_host = commands.check(is_tournament_host)
 
     @commands.command(name='tournament-who', aliases=['who', 'w'])
-    @is_host
     async def who(self, ctx, *, nickname):
         """Return the discord user associated with the given nickname.
 
