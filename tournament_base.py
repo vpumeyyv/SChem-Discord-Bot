@@ -536,6 +536,8 @@ class BaseTournament(commands.Cog):
                         inline=True)
         embed.add_field(name='Metric', value=f"`{round_metadata['metric']}`", inline=True)
         embed.add_field(name='Points', value=round_metadata['points'], inline=True)
+        if 'max_cycles' in round_metadata:
+            embed.add_field(name='Max Cycles', value=round_metadata['max_cycles'], inline=True)
 
         # Make the ISO datetime string friendlier-looking (e.g. no +00:00) or indicate puzzle is tournament-long
         round_end = format_date(round_metadata['end'])

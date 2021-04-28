@@ -350,7 +350,8 @@ class TournamentAdmin(BaseTournament):
     # TODO: max_cycles
     @commands.command(name='tournament-puzzle-add', aliases=['tpa', 'tournament-add-puzzle', 'tap'])
     @is_host
-    async def tournament_add_puzzle(self, ctx, round_name, metric, points: Union[int, float], start, end=None):
+    async def tournament_add_puzzle(self, ctx, round_name, metric, points: Union[int, float], start, end=None,
+                                    max_cycles: int = None):
         """Add a puzzle to the tournament.
 
         round_name: e.g. "Round 1" or "Bonus 1".
@@ -363,7 +364,8 @@ class TournamentAdmin(BaseTournament):
                 Allowed operators/fns: ^ (or **), /, *, +, -, max(), min(),
                                        log() (base 10)
                 Parsed with standard operator precedence (BEDMAS).
-                E.g.: "cycles + 0.1 * symbols + bonders^2"
+                It may also be put in backticks (and quotes) to prevent discord formatting it while writing it.
+                E.g.: "`cycles + 0.1 * symbols + bonders^2`"
         points: # of points that the first place player will receive.
                 Other players will get points proportional to this based
                 on their relative metric score.
@@ -375,6 +377,8 @@ class TournamentAdmin(BaseTournament):
              announced. Same format as `start`.
              If excluded, puzzle is open until the tournament is ended (e.g. the
              2019 tournament's 'Additional' puzzles).
+        max_cycles: The maximum cycle count of submissions to allow validation for.
+                    Default 1,000,000.
         [Attachment] *.puzzle:
             A .puzzle file containing the puzzle export string, which will be
             attached to the puzzle announcement post.
@@ -398,6 +402,7 @@ class TournamentAdmin(BaseTournament):
         if description_file:
             await self.read_attachment(description_file, extension='.txt')  # Make sure the file is parsable
 
+        metric = metric.strip('`')
         validate_metric(metric)
 
         async with self.tournament_metadata_write_lock:
@@ -429,6 +434,8 @@ class TournamentAdmin(BaseTournament):
                                                          'points': points,
                                                          'start': start,
                                                          'end': end}
+            if tournament_metadata is not None:
+                tournament_metadata['rounds'][level.name]['max_cycles'] = max_cycles
 
             # Re-sort rounds by start date and secondarily by round name
             tournament_metadata['rounds'] = dict(sorted(tournament_metadata['rounds'].items(),
@@ -459,16 +466,8 @@ class TournamentAdmin(BaseTournament):
                 self.round_start_tasks[level.name] = \
                     self.bot.loop.create_task(self.announce_round_start(level.name, tournament_metadata['rounds'][level.name]))
 
-            # TODO: Track the history of each player's scores over time and do cool graphs of everyone's metrics going
-            #       down as the deadline approaches!
-            #       Can do like the average curve of everyone's scores over time and see how that curve varies by level
-            #       Probably don't store every solution permanently to avoid the tournament.zip getting bloated but can
-            #       at least keep the scores from replaced solutions.
-
-            # TODO 2: Pareto frontier using the full submission history!
-
         await ctx.send(f"Successfully added {round_name} {level.name} to {tournament_metadata['name']}"
-                       + f"\nPreview its announcement post with !tournament-info {round_name}")
+                       + f"\nPreview its announcement post with !announcement-preview {round_name}")
 
     @commands.command(name='tournament-puzzle-update', aliases=['tpu', 'tournament-puzzle-edit',
                                                                 'tournament-update-puzzle',
@@ -516,6 +515,7 @@ class TournamentAdmin(BaseTournament):
             parser.add_argument('--points', type=lambda s: int(s) if float(s).is_integer() else float(s))
             parser.add_argument('--start', '--start_date')
             parser.add_argument('--end', '--end_date')
+            parser.add_argument('--max_cycles', type=int)
 
             # Heavy-handed SystemExit catch because even with exit_on_error, unknown args can cause an exit:
             # https://bugs.python.org/issue41255
@@ -568,6 +568,7 @@ class TournamentAdmin(BaseTournament):
                     args.end = end
 
             if args.metric:
+                args.metric = args.metric.strip('`')
                 validate_metric(args.metric)
 
             # Prepare a text post summarizing the changed fields

@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
+from contextlib import nullcontext
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -18,6 +19,8 @@ class TournamentSubmit(BaseTournament):
     """Submission-related tournament commands and utils."""
 
     is_host = commands.check(is_tournament_host)
+
+    DEFAULT_MAX_CYCLES = 1_000_000
 
     @staticmethod
     async def parse_solution_attachment(attachment: discord.Attachment, is_host=False):
@@ -37,7 +40,8 @@ class TournamentSubmit(BaseTournament):
         return soln_strs
 
     @staticmethod
-    def verify_round_submission_time(submission_msg: discord.Message, tournament_metadata: dict, puzzle_name: str):
+    def verify_round_submission_time(submission_msg: discord.Message, tournament_metadata: dict, puzzle_name: str,
+                                     ignore_end=False):
         """Raise an appropriate error if the given puzzle does not exist or the given message was not sent/edited
         during its submission time.
         """
@@ -57,7 +61,7 @@ class TournamentSubmit(BaseTournament):
 
         if msg_time < datetime.fromisoformat(round_metadata['start']):
             raise unknown_level_exc
-        elif msg_time > datetime.fromisoformat(round_metadata['end']):
+        elif msg_time > datetime.fromisoformat(round_metadata['end']) and not ignore_end:
             raise Exception(f"Submissions for `{puzzle_name}` have closed.")
 
     @staticmethod
@@ -179,9 +183,9 @@ class TournamentSubmit(BaseTournament):
                     # TODO: ProcessPoolExecutor might be more appropriate instead of the default (thread pool), but not
                     #  sure if the overhead for many small submissions is going to add up more than with threads and/or
                     #  if limitations on number of processes is the bigger factor
+                    max_cycles = round_metadata['max_cycles'] if 'max_cycles' in round_metadata else self.DEFAULT_MAX_CYCLES
                     loop = asyncio.get_event_loop()
-                    await loop.run_in_executor(None, solution.validate)  # Default thread pool executor
-
+                    await loop.run_in_executor(None, solution.validate, max_cycles)  # Default thread pool executor
                     # TODO: if metric uses 'outputs' as a var, we should instead catch any run errors (or just
                     #       PauseException, to taste) and pass the post-run solution object to eval_metric regardless
 
@@ -292,8 +296,8 @@ class TournamentSubmit(BaseTournament):
 
         level_name, author, expected_score, soln_name = schem.Solution.parse_metadata(soln_str)
 
-        # Check the round exists and the message is within its submission period
-        self.verify_round_submission_time(ctx.message, tournament_metadata, level_name)
+        # Check the round exists and the message is after its start date. Ignore the end date for fun submissions
+        self.verify_round_submission_time(ctx.message, tournament_metadata, level_name, ignore_end=True)
 
         round_metadata = tournament_metadata['rounds'][level_name]
         round_dir = tournament_dir / round_metadata['dir']
@@ -314,7 +318,9 @@ class TournamentSubmit(BaseTournament):
         # TODO: Check if the tournament host set a higher max submission cycles value, otherwise default to e.g.
         #       10,000,000 and break here if that's violated
 
-        with self.puzzle_submission_locks[level_name]:
+        # Since we allow non-scoring submissions to be sent after the deadline, the lock may not exist.
+        # We'll still grab it while it does, to avoid conflicts with results publication of solutions_fun.txt
+        with (self.puzzle_submission_locks[level_name] if level_name in self.puzzle_submission_locks else nullcontext()):
             level = self.get_level(round_dir)
 
             # Verify the solution
@@ -325,8 +331,9 @@ class TournamentSubmit(BaseTournament):
             solution = schem.Solution(level, soln_str)
 
             # Call the SChem validator in a thread so the bot isn't blocked
+            max_cycles = round_metadata['max_cycles'] if 'max_cycles' in round_metadata else self.DEFAULT_MAX_CYCLES
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, solution.validate)
+            await loop.run_in_executor(None, solution.validate, max_cycles)
 
             reply = f"Added non-scoring submission {soln_descr}"
 
