@@ -434,7 +434,7 @@ class TournamentAdmin(BaseTournament):
                                                          'points': points,
                                                          'start': start,
                                                          'end': end}
-            if tournament_metadata is not None:
+            if max_cycles is not None:
                 tournament_metadata['rounds'][level.name]['max_cycles'] = max_cycles
 
             # Re-sort rounds by start date and secondarily by round name
