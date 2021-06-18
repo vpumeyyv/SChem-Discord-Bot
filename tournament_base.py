@@ -518,7 +518,8 @@ class BaseTournament(commands.Cog):
             if puzzle_file is None:
                 raise FileNotFoundError(f"{round_metadata['round_name']} puzzle file not found")
 
-            attachment = discord.File(str(puzzle_file), filename=puzzle_file.name)
+            # Upload the attachment as a .txt so it can be previewed without downloading
+            attachment = discord.File(str(puzzle_file), filename=puzzle_file.stem + '.txt')
             with open(puzzle_file, 'r', encoding='utf-8') as pf:
                 level_code = pf.read()  # Note: read() converts any windows newlines to unix newlines
 

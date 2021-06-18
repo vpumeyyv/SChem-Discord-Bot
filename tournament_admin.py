@@ -467,7 +467,7 @@ class TournamentAdmin(BaseTournament):
                     self.bot.loop.create_task(self.announce_round_start(level.name, tournament_metadata['rounds'][level.name]))
 
         await ctx.send(f"Successfully added {round_name} {level.name} to {tournament_metadata['name']}"
-                       + f"\nPreview its announcement post with !announcement-preview {round_name}")
+                       + f"\nPreview its announcement post with !tournament-preview \"{round_name}\"")
 
     @commands.command(name='tournament-puzzle-update', aliases=['tpu', 'tournament-puzzle-edit',
                                                                 'tournament-update-puzzle',
