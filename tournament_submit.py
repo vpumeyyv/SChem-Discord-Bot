@@ -116,8 +116,8 @@ class TournamentSubmit(BaseTournament):
 
     @commands.Cog.listener('on_message')
     async def tournament_submit_shortcut(self, msg):
-        """Treat any non-command DM message containing an attachment(s) as a call to tournament-submit."""
-        if not msg.content.startswith(self.bot.command_prefix) and msg.guild is None and msg.attachments:
+        """Treat any non-command DM message as a call to tournament-submit."""
+        if not msg.content.startswith(self.bot.command_prefix) and msg.guild is None:
             msg.content = f"{self.bot.command_prefix}tournament-submit {msg.content}"
             await self.bot.process_commands(msg)
         # else do nothing as this does not replace the regular bot listener which will work on prefixed commands
@@ -128,7 +128,10 @@ class TournamentSubmit(BaseTournament):
     @commands.command(name='tournament-submit', aliases=['ts'])
     @commands.dm_only()
     async def tournament_submit(self, ctx, *, comment=""):
-        """Submit the attached solution file to the tournament.
+        """Submit the given solution text (either raw or an attached file) to the tournament.
+
+        If no attachment is included, the raw text is instead checked for being a solution export,
+        to be submitted without comment.
 
         [Optional] comment: Comment to go with the solution. When the puzzle results
                             are announced, your submission history will be publicly
@@ -138,9 +141,22 @@ class TournamentSubmit(BaseTournament):
                         Export from the CE save menu (hamburger button below Undo).
         """
         tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata()
+        is_host = is_tournament_host(ctx)
 
-        assert len(ctx.message.attachments) == 1, "Expected one attached solution file!"
-        soln_strs = await self.parse_solution_attachment(ctx.message.attachments[0], is_host=is_tournament_host(ctx))
+        assert len(ctx.message.attachments) <= 1, "Expected at most one attachment!"
+
+        if len(ctx.message.attachments) == 1:
+            soln_strs = await self.parse_solution_attachment(ctx.message.attachments[0], is_host=is_host)
+        else:
+            # Check if the message text is instead a raw solution string
+            try:
+                soln_strs = list(schem.Solution.split_solutions(comment))
+            except ValueError:
+                raise Exception("Message does not contain a SpaceChem solution")
+            comment = ""  # Make sure we don't store the comment in history
+
+            assert len(soln_strs) != 0, "Message does not contain a SpaceChem solution"
+            assert len(soln_strs) <= 1 or is_host, "Expected only one solution export."
 
         reaction = '✅'
         for soln_str in soln_strs:
