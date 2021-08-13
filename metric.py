@@ -32,6 +32,7 @@ METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                                     InstructionType.PAUSE)},
                     'bonds': lambda soln: num_instrs_of_type(soln, InstructionType.BOND_PLUS)
                                           + num_instrs_of_type(soln, InstructionType.BOND_MINUS),
+                    'pipe_segments': lambda soln: pipe_segments(soln),
                     'recycler_pipes': lambda soln: recycler_pipes(soln)}
                     # TODO: 'outputs': completed_outputs
                     #       requires modifications to tournament validator to accept solutions without an expected
@@ -244,6 +245,11 @@ def get_metametric_term_values(metametric_str, metametric_vars):
 def waldos(soln):
     """Return the number of waldos used by the solution (i.e. that have any non-Start instruction)."""
     return sum(1 for reactor in soln.reactors for waldo in reactor.waldos if waldo)
+
+
+def pipe_segments(soln):
+    """Return the total length of pipes used by the solution."""
+    return sum(len(pipe) for component in soln.components for pipe in component.out_pipes)
 
 
 def waldopath(soln):
