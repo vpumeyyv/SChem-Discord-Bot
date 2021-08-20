@@ -14,7 +14,8 @@ from schem.components import Reactor, Recycler
 # Operators allowed in puzzle metric strings
 METRIC_OPS = {ast.Pow: op.pow, ast.USub: op.neg, ast.Mult: op.mul, ast.Div: op.truediv, ast.Add: op.add, ast.Sub: op.sub,
               # Built-in functions must be wrapped since otherwise they don't provide arg-count inspection info
-              'log': lambda x: math.log(x, 10), 'max': lambda *x: max(*x), 'min': lambda *x: min(*x)}
+              'log': lambda x: math.log(x, 10), 'max': lambda *x: max(*x), 'min': lambda *x: min(*x),
+              'floor': lambda x: math.floor(x), 'ceil': lambda x: math.ceil(x)}
 # Functions for calculating values in a metric equation, given a Solution object
 METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                     'reactors': lambda soln: soln.expected_score.reactors,
