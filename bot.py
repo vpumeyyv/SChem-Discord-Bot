@@ -47,7 +47,7 @@ async def on_command_error(ctx, error):
         log_error += f"\n{type(error).__name__}: {error}"
         print(log_error)
 
-    await ctx.send(str(error))  # Probably bad practice but it makes the commands' code nice...
+    await ctx.send(f"```{error}```")  # Probably bad practice but it makes the commands' code nice...
 
 @bot.command(name='about')
 async def about(ctx):
