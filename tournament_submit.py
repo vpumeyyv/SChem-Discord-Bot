@@ -323,9 +323,9 @@ class TournamentSubmit(BaseTournament):
                 print(f"{type(e).__name__}: {e}")
                 # Replace the 'Running...' message if it got that far
                 if msg is not None:
-                    await msg.edit(content=f"{type(e).__name__}: {e}")
+                    await msg.edit(content=f"```{type(e).__name__}: {e}```")
                 else:
-                    await ctx.send(f"{type(e).__name__}: {e}")
+                    await ctx.send(f"```{type(e).__name__}: {e}```")
 
         await ctx.message.add_reaction(reaction)
 
