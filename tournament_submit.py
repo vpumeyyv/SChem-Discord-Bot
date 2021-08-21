@@ -199,9 +199,17 @@ class TournamentSubmit(BaseTournament):
                     #  if limitations on number of processes is the bigger factor
                     max_cycles = round_metadata['max_cycles'] if 'max_cycles' in round_metadata else self.DEFAULT_MAX_CYCLES
                     loop = asyncio.get_event_loop()
-                    await loop.run_in_executor(None, solution.validate, max_cycles)  # Default thread pool executor
-                    # TODO: if metric uses 'outputs' as a var, we should instead catch any run errors (or just
-                    #       PauseException, to taste) and pass the post-run solution object to eval_metric regardless
+
+                    # Allow submissions to omit the expected score, in which case it will be calculated for them.
+                    # Required for computation puzzles. For now, Solution.validate will still be used in the case of an
+                    # expected score being provided so I can maintain the possibility of catching schem bugs
+                    if solution.expected_score is not None:
+                        await loop.run_in_executor(None, solution.validate, max_cycles)  # Default thread pool executor
+                        # TODO: if metric uses 'outputs' as a var, we should instead catch any run errors (or just
+                        #       PauseException, to taste) and pass the post-run solution object to eval_metric regardless
+                    else:
+                        # Calculate the score and update the solution object with it (so eval_metric works below)
+                        solution.expected_score = await loop.run_in_executor(None, solution.run, max_cycles)
 
                     # Calculate the solution's metric score
                     metric = round_metadata['metric']
@@ -345,7 +353,15 @@ class TournamentSubmit(BaseTournament):
             # Call the SChem validator in a thread so the bot isn't blocked
             max_cycles = round_metadata['max_cycles'] if 'max_cycles' in round_metadata else self.DEFAULT_MAX_CYCLES
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, solution.validate, max_cycles)
+
+            # Allow submissions to omit the expected score, in which case it will be calculated for them.
+            # Required for computation puzzles. For now, Solution.validate will still be used in the case of an
+            # expected score being provided so I can maintain the possibility of catching schem bugs
+            if solution.expected_score is not None:
+                await loop.run_in_executor(None, solution.validate, max_cycles)  # Default thread pool executor
+            else:
+                # Calculate the score and update the solution object with it (so eval_metric works below)
+                solution.expected_score = await loop.run_in_executor(None, solution.run, max_cycles)
 
             reply = f"Added non-scoring submission {soln_descr}"
 
