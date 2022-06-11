@@ -20,7 +20,15 @@ from utils import split_by_char_limit, format_date, format_timedelta, wait_until
 load_dotenv()
 
 ANNOUNCEMENTS_CHANNEL_ID = int(os.getenv('SCHEM_BOT_ANNOUNCEMENTS_CHANNEL_ID'))
+ADMIN_ID = int(os.getenv('SCHEM_BOT_ADMIN_ID'))
 CORANAC_SITE = "https://www.coranac.com/spacechem/mission-viewer"
+
+
+# Used in a decorator for checking if a user has tournament-hosting permissions.
+# Unfortunately can't be part of the Tournament cog since command.check doesn't pass self/cls
+def is_bot_admin(ctx):
+    # Avoids @commands.is_owner() decorator so that I can't cheat when others are hosting the tournament/bot
+    return ctx.message.author.id == ADMIN_ID
 
 
 # Used in a decorator for checking if a user has tournament-hosting permissions.

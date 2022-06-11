@@ -13,7 +13,7 @@ from tournament import Tournament
 from utils import format_date
 
 TOKEN = os.getenv('SCHEM_BOT_DISCORD_TOKEN')
-MAINTAINER_DISCORD_ID = int(os.getenv('SCHEM_BOT_MAINTAINER_DISCORD_ID'))
+ADMIN_ID = int(os.getenv('SCHEM_BOT_ADMIN_ID'))
 ANNOUNCEMENTS_CHANNEL_ID = int(os.getenv('SCHEM_BOT_ANNOUNCEMENTS_CHANNEL_ID'))
 
 bot = commands.Bot(command_prefix='!',
@@ -53,7 +53,7 @@ async def on_command_error(ctx, error):
 async def about(ctx):
     """Info about this bot."""
     await ctx.send(f"""Hi! I'm a bot for hosting the annual SpaceChem tournament.
-To save weakling human tournament hosts from the effort of manually verifying every player submission, I accept Community Edition solution export files via private DM, and automatically validate them using a clean room implementation of the SpaceChem backend, which you can check out at <https://github.com/spacechem-community-developers/SChem>. This was created by Zig without access to the SC source code and has been tested reasonably thoroughly. It's expected that it's currently at full feature parity with SpaceChem, but 1 or 2 bugs may turn up during the tournament. If you find that it fails to correctly validate a solution that runs in SpaceChem, please DM <@{MAINTAINER_DISCORD_ID}>. If the bug can be demonstrated without spoiling your tournament solution to others, you can also directly open an issue in the SChem github project.
+To save weakling human tournament hosts from the effort of manually verifying every player submission, I accept Community Edition solution export files via private DM, and automatically validate them using a clean room implementation of the SpaceChem backend, which you can check out at <https://github.com/spacechem-community-developers/SChem>. If you find any bugs with the bot, please DM <@{ADMIN_ID}>. Direct non-bug tournament issues toward the tournament host(s) (see !tournament-hosts)
 
 To see all available bot functionality, DM me `!help` or `!help <specific-command>` (to send a DM, right click my name and select 'Message'). The main commands of interest:
 - !tournament-info - View info on the current tournament
@@ -89,7 +89,7 @@ async def run(ctx):
 
     # Call the SChem validator in a thread so the bot isn't blocked
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, solution.validate, soln_str)  # Default thread executor
+    await loop.run_in_executor(None, solution.validate)  # Default thread executor
 
     await ctx.message.add_reaction('✅')
     await msg.edit(content=f"Successfully validated {solution.description}")

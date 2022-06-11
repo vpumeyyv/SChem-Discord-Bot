@@ -5,14 +5,15 @@ the SChem package (https://pypi.org/project/schem/).
 
 ## Setup
 Add:
-```
-SCHEM_BOT_DISCORD_TOKEN=<your API token>
+```dotenv
+SCHEM_BOT_DISCORD_TOKEN=<your bot API token>
 SCHEM_BOT_ANNOUNCEMENTS_CHANNEL_ID=<public tournament channel ID>
+SCHEM_BOT_ADMIN_ID=<user ID of bot admin; can set tournament hosts>
 ```
 to a `.env` file in the same directory as bot.py
 
 See https://discordpy.readthedocs.io/en/latest/discord.html for setting up the bot and getting its API token and 
-https://support.discord.com/hc/en-us/articles/206346498-Where-can-I-find-my-User-Server-Message-ID- for getting the channel ID.
+https://support.discord.com/hc/en-us/articles/206346498-Where-can-I-find-my-User-Server-Message-ID- for getting the channel and user IDs.
 
 ## Usage
 `python bot.py`

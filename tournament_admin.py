@@ -24,7 +24,8 @@ from utils import process_start_end_dates, format_date, split_by_char_limit
 class TournamentAdmin(BaseTournament):
     """Admin-level tournament commands."""
 
-    # Decorator for host-only commands
+    # Decorators for admin and host-only commands
+    is_admin = commands.check(is_bot_admin)
     is_host = commands.check(is_tournament_host)
 
     def hosts(self):
@@ -37,7 +38,7 @@ class TournamentAdmin(BaseTournament):
             return set(json.load(f)['hosts'])
 
     # Note: Command docstrings should be limited to ~80 char lines to avoid ugly wraps in any reasonably-sized window
-    @commands.command(name='tournament-hosts', aliases=['th', 'tournament-host-list', 'thl'])
+    @commands.command(name='tournament-hosts', aliases=['th', 'tournament-host'])
     async def hosts_cmd(self, ctx):
         """List all tournament hosts.
 
@@ -47,7 +48,7 @@ class TournamentAdmin(BaseTournament):
                        allowed_mentions=discord.AllowedMentions(users=False))  # Don't actually ping them
 
     @commands.command(name='tournament-host-add', aliases=['tournament-add-host', 'add-tournament-host'])
-    @commands.is_owner()
+    @is_admin
     async def add_tournament_host(self, ctx, user: discord.User):
         """Give someone tournament-hosting permissions."""
         self.TOURNAMENTS_DIR.mkdir(exist_ok=True)
@@ -63,7 +64,7 @@ class TournamentAdmin(BaseTournament):
         await ctx.send(f"{user} added to tournament hosts.")
 
     @commands.command(name='tournament-host-remove', aliases=['tournament-remove-host', 'remove-tournament-host'])
-    @commands.is_owner()
+    @is_admin
     async def remove_tournament_host(self, ctx, user: discord.User):
         """Remove someone's tournament-hosting permissions."""
         hosts = self.hosts()
