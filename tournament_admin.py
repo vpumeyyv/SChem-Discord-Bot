@@ -99,7 +99,7 @@ class TournamentAdmin(BaseTournament):
                         e.g. 0, 1, 1, 3, 4, ...).
                     The metametric will be auto-normalized to give each player
                     puzzle_points * (your_metametric / best_metametric) points.
-                    E.g. "4*(best_metric / your_metric) + (your_rank_idx / num_submitters)"
+                    E.g. "4*(best_metric / your_metric) + (your_rank_idx / num_solvers)"
                     would split the weight of metric vs placement 80-20.
         [Attachment] *.txt:
             A .txt file containing a description to be included in the tournament

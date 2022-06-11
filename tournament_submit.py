@@ -192,7 +192,7 @@ class TournamentSubmit(BaseTournament):
                     soln_descr = schem.Solution.describe(level_name, author, expected_score, soln_name)
                     msg = await ctx.send(f"Running {soln_descr}, this should take < 30s barring an absurd cycle count...")
 
-                    solution = schem.Solution(level, soln_str)
+                    solution = schem.Solution(soln_str, level=level)
 
                     # Call the SChem validator in a thread so the bot isn't blocked
                     # TODO: Provide max_cycles arg based on the round
@@ -237,7 +237,7 @@ class TournamentSubmit(BaseTournament):
                                 # sub-optimal for style/meme/whatever reasons)
                                 # Note: This re-does the work of calculating the old metric but is simpler and allows
                                 #       the TO to modify the metric after the puzzle opens if necessary
-                                old_metric_score = eval_metric(schem.Solution(level, cur_soln_str), metric)
+                                old_metric_score = eval_metric(schem.Solution(cur_soln_str, level=level), metric)
                                 if soln_metric_score > old_metric_score:
                                     await ctx.message.add_reaction('⚠')
 
@@ -344,7 +344,7 @@ class TournamentSubmit(BaseTournament):
             soln_descr = schem.Solution.describe(level_name, author, expected_score, soln_name)
             msg = await ctx.send(f"Running {soln_descr}, this should take < 30s barring an absurd cycle count...")
 
-            solution = schem.Solution(level, soln_str)
+            solution = schem.Solution(soln_str, level=level)
 
             # Call the SChem validator in a thread so the bot isn't blocked
             max_cycles = round_metadata['max_cycles'] if 'max_cycles' in round_metadata else self.DEFAULT_MAX_CYCLES
@@ -434,7 +434,7 @@ class TournamentSubmit(BaseTournament):
                     reply += f"\n{indent}Scoring submission: {score}"
                     if soln_name is not None:
                         reply += ' ' + soln_name
-                    reply += f", Metric Score: {eval_metric(schem.Solution(level, soln_str), round_metadata['metric'])}"
+                    reply += f", Metric Score: {eval_metric(schem.Solution(soln_str, level=level), round_metadata['metric'])}"
                     break
             if not has_scoring:
                 reply += f"\n{indent}No scoring submission."
