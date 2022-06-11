@@ -14,7 +14,7 @@ import schem
 from slugify import slugify
 
 from metric import validate_metric, validate_metametric
-from tournament_base import PuzzleSubmissionsLock, BaseTournament, ANNOUNCEMENTS_CHANNEL_ID, is_tournament_host
+from tournament_base import PuzzleSubmissionsLock, BaseTournament, ANNOUNCEMENTS_CHANNEL_ID, is_bot_admin, is_tournament_host
 from utils import process_start_end_dates, format_date, split_by_char_limit
 
 # TODO: Organize things to be able to use the same commands or code to run standalone puzzle challenges unrelated to
