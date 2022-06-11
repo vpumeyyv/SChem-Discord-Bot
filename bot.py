@@ -84,16 +84,15 @@ async def run(ctx):
     except UnicodeDecodeError as e:
         raise Exception("Attachment must be a plaintext file (containing a Community Edition export).") from e
 
-    level_name, author, expected_score, soln_name = schem.Solution.parse_metadata(soln_str)
-    soln_descr = schem.Solution.describe(level_name, author, expected_score, soln_name)
-    msg = await ctx.send(f"Running {soln_descr}, this should take < 30s barring an absurd cycle count...")
+    solution = schem.Solution(soln_str)
+    msg = await ctx.send(f"Running {solution.description}, this should take < 30s barring an absurd cycle count...")
 
     # Call the SChem validator in a thread so the bot isn't blocked
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, schem.validate, soln_str)  # Default thread executor
+    await loop.run_in_executor(None, solution.validate, soln_str)  # Default thread executor
 
     await ctx.message.add_reaction('✅')
-    await msg.edit(content=f"Successfully validated {soln_descr}")
+    await msg.edit(content=f"Successfully validated {solution.description}")
 
 # TODO @bot.command(name='random-level')
 
