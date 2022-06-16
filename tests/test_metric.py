@@ -112,8 +112,7 @@ MEMBER:'instr-output',-1,1,128,2,2,0,0
 PIPE:0,4,1
 PIPE:1,4,2'''"""
 
-level = schem.Level(schem.levels["Accidents Happen"])
-soln = schem.Solution(level, test_soln_str)
+soln = schem.Solution(test_soln_str)
 
 
 class TestGame(unittest.TestCase):

@@ -53,7 +53,7 @@ async def on_command_error(ctx, error):
 async def about(ctx):
     """Info about this bot."""
     await ctx.send(f"""Hi! I'm a bot for hosting the annual SpaceChem tournament.
-To save weakling human tournament hosts from the effort of manually verifying every player submission, I accept Community Edition solution export files via private DM, and automatically validate them using a clean room implementation of the SpaceChem backend, which you can check out at <https://github.com/spacechem-community-developers/SChem>. If you find any bugs with the bot, please DM <@{ADMIN_ID}>. Direct non-bug tournament issues toward the tournament host(s) (see !tournament-hosts)
+To save weakling human tournament hosts from the effort of manually verifying every player submission, I accept Community Edition solution export files via private DM, and automatically validate them using a clean room implementation of the SpaceChem backend, which you can check out at <https://github.com/spacechem-community-developers/SChem>. If you find any bugs with the bot, please DM <@{ADMIN_ID}>. Direct non-bug tournament issues toward the tournament host(s) (see `!tournament-hosts`).
 
 To see all available bot functionality, DM me `!help` or `!help <specific-command>` (to send a DM, right click my name and select 'Message'). The main commands of interest:
 - !tournament-info - View info on the current tournament

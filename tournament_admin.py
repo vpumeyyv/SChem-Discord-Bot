@@ -656,7 +656,7 @@ class TournamentAdmin(BaseTournament):
                                 # TODO: If/when 'outputs' is a metric term, will need to update this similarly to submit to
                                 #       allow partial solutions in its presence
                                 try:
-                                    solution = schem.Solution(level, soln_str)
+                                    solution = schem.Solution(soln_str, level=level)
                                     await loop.run_in_executor(None, solution.validate)
                                 except Exception:
                                     invalid_soln_authors.add(author_name)

@@ -618,7 +618,7 @@ class BaseTournament(commands.Cog):
             solns_str = sf.read()
 
         soln_strs = list(schem.Solution.split_solutions(solns_str))
-        solutions = [schem.Solution(level, soln_str) for soln_str in soln_strs]
+        solutions = [schem.Solution(soln_str, level=level) for soln_str in soln_strs]
 
         # Calculate each score and the top score
         metric_scores_and_terms = [get_metric_and_terms(solution, round_metadata['metric']) for solution in solutions]
@@ -696,7 +696,7 @@ class BaseTournament(commands.Cog):
             fun_solns_str = f.read().strip()
 
         if fun_solns_str:
-            fun_solutions = [schem.Solution(level, s) for s in schem.Solution.split_solutions(fun_solns_str)]
+            fun_solutions = [schem.Solution(s, level=level) for s in schem.Solution.split_solutions(fun_solns_str)]
             fun_col_headers = ('Player', 'Score', 'Solution Name')
             fun_table_rows = [(soln.author, str(soln.expected_score), soln.name if soln.name else '')
                               for soln in fun_solutions]
