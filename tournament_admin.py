@@ -3,7 +3,7 @@
 
 import argparse
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import shutil
 from typing import Union
@@ -924,3 +924,59 @@ class TournamentAdmin(BaseTournament):
 
         reply = f"Successfully deleted {round_name}, `{puzzle_name}`"
         await (ctx.send(reply) if msg is None else msg.edit(content=reply))
+
+    @commands.command(name='edit-bot-post')
+    @is_host
+    async def edit_bot_post(self, ctx, message_id: int):
+        """DANGEROUS. Manually edit the specified bot post. Must be a message in the announcements channel.
+
+        Intended for editing the tournament announcement post, which is tricky to automate as it is typically
+        split across several messages and message char limits apply to the edits.
+
+        message_id: The ID of the message to be edited.
+        Attachment: The new text to replace the message with. Must respect discord's 2000-char limit.
+                    Make sure not to forget any formatting; don't blindly copy the text to edit!
+        """
+        assert len(ctx.message.attachments) == 1, "Expected one attached text file of the new post contents"
+        new_text = (await self.read_attachment(ctx.message.attachments[0])).strip()
+
+        if len(new_text) > 2000:
+            raise Exception("Text is over discord's 2000-char message size limit")
+
+        channel = self.bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
+        try:
+            msg = await channel.fetch_message(message_id)
+        except discord.NotFound:
+            raise ValueError("Couldn't find message with this ID in the announcements channel!")
+
+        assert msg.author.bot, "Specified post is not a bot post."
+
+        _, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
+
+        # Prevent editing messages older than this tournament (to within a minute of error)
+        if msg.created_at.replace(tzinfo=timezone.utc) < (datetime.fromisoformat(tournament_metadata['start'])
+                                                          - timedelta(minutes=1)):
+            raise ValueError("Cannot edit message sent before this tournament.")
+
+        # Prevent editing puzzle announcement posts since there's a proper tool for that
+        if any('start_post' in round_metadata and round_metadata['start_post'] == msg.jump_url
+               for round_metadata in tournament_metadata['rounds'].values()):
+            raise ValueError("Cannot edit puzzle announcement post; use `!tournament-puzzle-update` instead!")
+
+        if msg.embeds:
+            raise ValueError("Cannot edit message containing an embed")
+
+        # Display what the edit will look like and ask for confirmation
+        await ctx.send(f"You're about to edit <{msg.jump_url}> to:"
+                       "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+        await ctx.send(new_text)
+        confirm_msg = await ctx.send("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                                     "\nAre you sure you wish to continue?"
+                                     " React with ✅ within 30 seconds to proceed, ❌ to cancel all changes.")
+        if not await self.wait_for_confirmation(ctx, confirm_msg):
+            return
+
+        await msg.edit(content=new_text)
+
+        await ctx.send(f"Successfully edited {msg.jump_url}")
