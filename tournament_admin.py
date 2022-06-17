@@ -94,13 +94,14 @@ class TournamentAdmin(BaseTournament):
              Same format as `start`.
         metametric: The equation determining how much of a puzzle's points each
                     player will receive (highest metametric receives full puzzle points).
+                    Can be put in "`quotes AND backticks`" to avoid discord formatting it.
                     Valid terms:
                         your_metric, best_metric, your_rank_idx, num_solvers
                         where your_rank_idx is the rank, 0-indexed (with ties possible,
                         e.g. 0, 1, 1, 3, 4, ...).
                     The metametric will be auto-normalized to give each player
                     puzzle_points * (your_metametric / best_metametric) points.
-                    E.g. "4*(best_metric / your_metric) + (your_rank_idx / num_solvers)"
+                    E.g. "`4*(best_metric / your_metric) + (your_rank_idx / num_solvers)`"
                     would split the weight of metric vs placement 80-20.
         [Attachment] *.txt:
             A .txt file containing a description to be included in the tournament
@@ -117,6 +118,7 @@ class TournamentAdmin(BaseTournament):
         tournament_dir_name = slugify(name)  # Convert to a valid directory name
         assert tournament_dir_name, f"Invalid tournament name {name}"
 
+        metametric = metametric.strip('`')  # Allow specifying with backticks to avoid discord formatting
         validate_metametric(metametric)
         start, end = process_start_end_dates(start, end)
 
@@ -165,7 +167,7 @@ class TournamentAdmin(BaseTournament):
 
         update_fields: Fields to update, specified like:
                        field1=value "field2=value with spaces"
-                       Valid fields (same as tournament-create): name, start, end
+                       Valid fields (same as tournament-create): name, start, end, metametric
                        Double-quotes within a field's value should be avoided
                        as they will interfere with arg-parsing.
                        Unspecified fields will not be modified.
@@ -181,7 +183,7 @@ class TournamentAdmin(BaseTournament):
 
             parser = argparse.ArgumentParser(exit_on_error=False)
             parser.add_argument('--name')
-            #parser.add_argument('--metametric')  # TODO
+            parser.add_argument('--metametric')
             parser.add_argument('--start', '--start_date')
             parser.add_argument('--end', '--end_date')
 
@@ -210,10 +212,6 @@ class TournamentAdmin(BaseTournament):
 
             modified_round_ends = set()
             modified_open_round_ends = set()
-
-            # TODO: Re-calculate previous rounds' scores based on metametric change
-            #if args.metametric:
-            #    validate_metametric(args.metametric)
 
             if args.start or args.end:
                 # Reformat and do basic checks on any changed date args (e.g. making sure end is after start)
@@ -252,7 +250,19 @@ class TournamentAdmin(BaseTournament):
                         elif args.end < round_metadata['end']:
                             raise ValueError(f"New end date is before end of `{round_metadata['round_name']}`")
 
-            # Update tournament metadata and summary post
+            # TODO: Re-calculate previous rounds' scores based on metametric change
+            if args.metametric:
+                # Since this is a naive implementation that doesn't recalculate scores, prevent use of this command
+                # if any puzzles with non-0 score have closed
+                if any('end_post' in round_metadata and round_metadata['points'] != 0
+                       for round_metadata in tournament_metadata['rounds'].values()):
+                    raise Exception("Can't edit metametric; a non-test round has already closed and been scored."
+                                    "\nAsk Zig to implement the non-naive version of this if you REALLY need it...")
+
+                args.metametric = args.metametric.strip('`')  # Ignore backticks
+                validate_metametric(args.metametric)
+
+            # Update tournament metadata and change-summary post
             for k, v in vars(args).items():
                 if v:
                     # Check that field has actually changed
@@ -261,6 +271,10 @@ class TournamentAdmin(BaseTournament):
 
                     if k in ('start', 'end'):
                         summary_text += f"\n  • {k}: `{format_date(tournament_metadata[k])}` -> `{format_date(v)}`"
+                    elif k == 'metametric':
+                        # Put old and new versions on separate lines so it's easier to compare
+                        summary_text += (f"\n  • {k}: `{tournament_metadata[k]}`"
+                                         f"\n{' ' * (len(k) + 13)}-> `{v}`")  # try to roughly line them up
                     else:
                         summary_text += f"\n  • {k}: `{tournament_metadata[k]}` -> `{v}`"
                     tournament_metadata[k] = v
@@ -272,8 +286,16 @@ class TournamentAdmin(BaseTournament):
 
             # If tournament is already open, ask for confirmation before making changes
             if 'start_post' in tournament_metadata:
-                await ctx.send("The tournament is already open so the following public announcement post will be made:"
-                               "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                warn_text = ""
+
+                # Remind the host to edit the tournament announcement post before making any public changes
+                if args.metametric or args.end:
+                    warn_text += ("Before running this, make sure you've used `!edit-bot-post` to edit these fields in"
+                                  f" the tournament announcement post (<{tournament_metadata['start_post']}>)!\n\n")
+
+                warn_text += ("The tournament is already open so the following public announcement post will be made:"
+                              "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                await ctx.send(warn_text)
                 await ctx.send(summary_text)
                 confirm_msg = await ctx.send("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                                              "\nAre you sure you wish to continue?"
@@ -348,7 +370,6 @@ class TournamentAdmin(BaseTournament):
         except UnicodeDecodeError as e:
             raise Exception(f"{attachment.filename} is not a plaintext file.") from e
 
-    # TODO: max_cycles
     @commands.command(name='tournament-puzzle-add', aliases=['tpa', 'tournament-add-puzzle', 'tap'])
     @is_host
     async def tournament_add_puzzle(self, ctx, round_name, metric, points: Union[int, float], start, end=None,
@@ -365,7 +386,7 @@ class TournamentAdmin(BaseTournament):
                 Allowed operators/fns: ^ (or **), /, *, +, -, max(), min(),
                                        log() (base 10)
                 Parsed with standard operator precedence (BEDMAS).
-                It may also be put in backticks (and quotes) to prevent discord formatting it while writing it.
+                Can be put in "`quotes AND backticks`" to avoid discord formatting it.
                 E.g.: "`cycles + 0.1 * symbols + bonders^2`"
         points: # of points that the first place player will receive.
                 Other players will get points proportional to this based
@@ -468,7 +489,7 @@ class TournamentAdmin(BaseTournament):
                     self.bot.loop.create_task(self.announce_round_start(level.name, tournament_metadata['rounds'][level.name]))
 
         await ctx.send(f"Successfully added {round_name} {level.name} to {tournament_metadata['name']}"
-                       + f"\nPreview its announcement post with !tournament-preview \"{round_name}\"")
+                       + f"\nPreview its announcement post with `!tournament-preview \"{round_name}\"`")
 
     @commands.command(name='tournament-puzzle-update', aliases=['tpu', 'tournament-puzzle-edit',
                                                                 'tournament-update-puzzle',
