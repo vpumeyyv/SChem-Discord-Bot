@@ -101,7 +101,7 @@ class TournamentAdmin(BaseTournament):
                         e.g. 0, 1, 1, 3, 4, ...).
                     The metametric will be auto-normalized to give each player
                     puzzle_points * (your_metametric / best_metametric) points.
-                    E.g. "`4*(best_metric / your_metric) + (your_rank_idx / num_solvers)`"
+                    E.g. "`4*(best_metric / your_metric) + (1 - (your_rank_idx / num_solvers))`"
                     would split the weight of metric vs placement 80-20.
         [Attachment] *.txt:
             A .txt file containing a description to be included in the tournament
@@ -173,7 +173,7 @@ class TournamentAdmin(BaseTournament):
                        Unspecified fields will not be modified.
         [Attachment] *.txt: If provided, update the tournament announcement description to the given text.
 
-        E.g.: !tournament-update "name=2000 SpaceChem Tournament" end=2000-01-31T19:00-05:00
+        E.g.: !tournament-update "name=2000 SpaceChem Tournament" end=2000-01-31T19:00-05:00 "metametric=`best_metric / your_metric`"
         """
         async with self.tournament_metadata_write_lock:
             tournament_dir, tournament_metadata = self.get_active_tournament_dir_and_metadata(is_host=True)
