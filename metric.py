@@ -267,19 +267,16 @@ def waldopath(soln):
         covered_posns = set()
         for waldo in reactor.waldos:
             # Note that this hasn't accounted for any arrow on the start posn yet
-            start_posn, start_dirn = next((posn, cmd.direction) for posn, (_, cmd) in waldo.instr_map.items()
+            start_posn, start_dirn = next((posn, cmd.direction) for posn, cmd in waldo.commands.items()
                                           if cmd.type == InstructionType.START)
             visited_posn_dirns = set()  # posn + direction tuples to catch when we're looping
             unexplored_branches_stack = [(start_posn, start_dirn)]
             while unexplored_branches_stack:
                 cur_posn, cur_dirn = unexplored_branches_stack.pop()
 
-                # Check the current cell for an arrow and/or branching instruction
-                arrow_dirn, cmd = waldo.instr_map[cur_posn] if cur_posn in waldo.instr_map else (None, None)
-
                 # Arrows update the direction of the current branch but don't create a new one
-                if arrow_dirn is not None:
-                    cur_dirn = arrow_dirn
+                if cur_posn in waldo.arrows:
+                    cur_dirn = waldo.arrows[cur_posn]
 
                 # Check the current position/direction against the visit map. We do this after evaluating the arrow to
                 # reduce excess visits (since the original direction of a waldo never matters to its future path if an
@@ -293,6 +290,7 @@ def waldopath(soln):
                 visited_posn_dirns.add(posn_dirn)
 
                 # Add any new branch
+                cmd = waldo.commands[cur_posn] if cur_posn in waldo.commands else None
                 if cmd is not None and cmd.type in branching_instr_types:
                     next_branch_posn = cur_posn + cmd.direction
                     if is_valid_posn(next_branch_posn):
@@ -328,11 +326,7 @@ def used_bonders(soln):
 
 def num_arrows(soln):
     """Return the number of arrows in the solution."""
-    return sum(1
-               for reactor in soln.reactors
-               for waldo in reactor.waldos
-               for arrow, _ in waldo.instr_map.values()
-               if arrow is not None)
+    return sum(len(waldo.arrows) for reactor in soln.reactors for waldo in reactor.waldos)
 
 
 def num_instrs_of_type(soln, instr_type):
@@ -340,8 +334,8 @@ def num_instrs_of_type(soln, instr_type):
     return sum(1
                for reactor in soln.reactors
                for waldo in reactor.waldos
-               for _, cmd in waldo.instr_map.values()
-               if cmd is not None and cmd.type == instr_type)
+               for cmd in waldo.commands.values()
+               if cmd.type == instr_type)
 
 
 def completed_outputs(soln):
