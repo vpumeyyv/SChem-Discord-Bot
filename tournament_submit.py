@@ -170,20 +170,6 @@ class TournamentSubmit(BaseTournament):
                 round_metadata = tournament_metadata['rounds'][level_name]
                 round_dir = tournament_dir / round_metadata['dir']
 
-                # Skip participant name checks for the TO backdoor
-                if not is_tournament_host(ctx):
-                    team_name = self.add_or_check_player(round_dir, ctx.message.author, author)
-
-                    # Change the author name if the submitter is part of a team
-                    if team_name is not None:
-                        author = team_name
-
-                # Prefix the solution name with "[author] " for readability on import, and replace author if in a team
-                new_soln_name = f"[{author}]" if soln_name is None else f"[{author}] {soln_name}"
-                old_metadata_line = soln_str.strip().split('\n', maxsplit=1)[0]
-                new_metadata_line = f"SOLUTION:{level_name},{author},{expected_score},{new_soln_name}"
-                soln_str = soln_str.replace(old_metadata_line, new_metadata_line, 1)
-
                 with self.puzzle_submission_locks[level_name]:
                     level = self.get_level(round_dir)
 
@@ -193,6 +179,18 @@ class TournamentSubmit(BaseTournament):
                     msg = await ctx.send(f"Running {soln_descr}, this should take < 30s barring an absurd cycle count...")
 
                     solution = schem.Solution(soln_str, level=level)
+
+                    # Skip participant name checks for the TO backdoor
+                    if not is_tournament_host(ctx):
+                        team_name = self.add_or_check_player(round_dir, ctx.message.author, author)
+
+                        # Change the author name if the submitter is part of a team
+                        if team_name is not None:
+                            author = team_name
+                            solution.author = author
+
+                    # Prefix the solution name with "[author] " for readability on import
+                    solution.name = f"[{author}]" if soln_name is None else f"[{author}] {soln_name}"
 
                     # Call the SChem validator in a thread so the bot isn't blocked
                     # TODO: Provide max_cycles arg based on the round
@@ -254,7 +252,7 @@ class TournamentSubmit(BaseTournament):
                                 new_soln_strs.append(cur_soln_str)
                         else:
                             # If we didn't break in the loop, we did no async operations and can skip the re-read
-                            new_soln_strs.append(soln_str)
+                            new_soln_strs.append(solution.export_str())
                             break
 
                     with open(round_dir / 'solutions.txt', 'w', encoding='utf-8') as f:
@@ -318,19 +316,6 @@ class TournamentSubmit(BaseTournament):
         round_metadata = tournament_metadata['rounds'][level_name]
         round_dir = tournament_dir / round_metadata['dir']
 
-        # Register or verify this participant's nickname
-        team_name = self.add_or_check_player(round_dir, ctx.message.author, author)
-
-        # Change the author name if the submitter is part of a team
-        if team_name is not None:
-            author = team_name
-
-        # Prefix the solution name with "[author] " for readability on import
-        soln_name = f"[{author}]" if soln_name is None else f"[{author}] {soln_name}"
-        old_metadata_line = soln_str.strip().split('\n', maxsplit=1)[0]
-        new_metadata_line = f"SOLUTION:{level_name},{author},{expected_score},{soln_name}"
-        soln_str = soln_str.replace(old_metadata_line, new_metadata_line, 1)
-
         # TODO: Check if the tournament host set a higher max submission cycles value, otherwise default to e.g.
         #       10,000,000 and break here if that's violated
 
@@ -346,6 +331,17 @@ class TournamentSubmit(BaseTournament):
 
             solution = schem.Solution(soln_str, level=level)
 
+            # Register or verify this participant's nickname
+            team_name = self.add_or_check_player(round_dir, ctx.message.author, author)
+
+            # Change the author name if the submitter is part of a team
+            if team_name is not None:
+                author = team_name
+                solution.author = author
+
+            # Prefix the solution name with "[author] " for readability on import
+            solution.name = f"[{author}]" if soln_name is None else f"[{author}] {soln_name}"
+
             # Call the SChem validator in a thread so the bot isn't blocked
             max_cycles = round_metadata['max_cycles'] if 'max_cycles' in round_metadata else self.DEFAULT_MAX_CYCLES
             loop = asyncio.get_event_loop()
@@ -360,8 +356,8 @@ class TournamentSubmit(BaseTournament):
             new_soln_strs = []
             for cur_soln_str in schem.Solution.split_solutions(solns_str):
                 _, cur_author, _, cur_soln_name = schem.Solution.parse_metadata(cur_soln_str)
-                if cur_author == author and cur_soln_name == soln_name:
-                    if soln_name == f"[{author}]":  # The default label only
+                if cur_author == author and cur_soln_name == solution.name:
+                    if solution.name == f"[{author}]":  # The default label only
                         reply += "\nWarning: Solution has no name, and replaces your previous unnamed fun submission." \
                                  + " Consider naming your fun submissions for readability and to submit multiple of them!"
                     else:
@@ -369,7 +365,7 @@ class TournamentSubmit(BaseTournament):
                 else:
                     new_soln_strs.append(cur_soln_str)
 
-            new_soln_strs.append(soln_str)
+            new_soln_strs.append(solution.export_str())
 
             with open(round_dir / 'solutions_fun.txt', 'w', encoding='utf-8') as f:
                 # Make sure not to write windows newlines or python will double the carriage returns
