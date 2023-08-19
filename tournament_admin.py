@@ -678,7 +678,7 @@ class TournamentAdmin(BaseTournament):
                                 #       allow partial solutions in its presence
                                 try:
                                     solution = schem.Solution(soln_str, level=level)
-                                    await loop.run_in_executor(None, solution.validate)
+                                    await loop.run_in_executor(None, lambda: solution.validate(hash_states=0))
                                 except Exception:
                                     invalid_soln_authors.add(author_name)
                                     continue

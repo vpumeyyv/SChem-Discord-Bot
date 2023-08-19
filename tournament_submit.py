@@ -204,12 +204,12 @@ class TournamentSubmit(BaseTournament):
                     # Required for computation puzzles. For now, Solution.validate will still be used in the case of an
                     # expected score being provided so I can maintain the possibility of catching schem bugs
                     if solution.expected_score is not None:
-                        await loop.run_in_executor(None, solution.validate, max_cycles)  # Default thread pool executor
+                        await loop.run_in_executor(None, lambda: solution.validate(max_cycles, hash_states=0))  # Default thread pool executor
                         # TODO: if metric uses 'outputs' as a var, we should instead catch any run errors (or just
                         #       PauseException, to taste) and pass the post-run solution object to eval_metric regardless
                     else:
                         # Calculate the score and update the solution object with it (so eval_metric works below)
-                        solution.expected_score = await loop.run_in_executor(None, solution.run, max_cycles)
+                        solution.expected_score = await loop.run_in_executor(None, lambda: solution.run(max_cycles, hash_states=0))
 
                     # Calculate the solution's metric score
                     metric = round_metadata['metric']
@@ -358,10 +358,10 @@ class TournamentSubmit(BaseTournament):
             # Required for computation puzzles. For now, Solution.validate will still be used in the case of an
             # expected score being provided so I can maintain the possibility of catching schem bugs
             if solution.expected_score is not None:
-                await loop.run_in_executor(None, solution.validate, max_cycles)  # Default thread pool executor
+                await loop.run_in_executor(None, lambda: solution.validate(max_cycles, hash_states=0))  # Default thread pool executor
             else:
                 # Calculate the score and update the solution object with it (so eval_metric works below)
-                solution.expected_score = await loop.run_in_executor(None, solution.run, max_cycles)
+                solution.expected_score = await loop.run_in_executor(None, lambda: solution.run(max_cycles, hash_states=0))
 
             reply = f"Added non-scoring submission {soln_descr}"
 

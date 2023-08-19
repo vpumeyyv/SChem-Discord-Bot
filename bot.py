@@ -89,7 +89,7 @@ async def run(ctx):
 
     # Call the SChem validator in a thread so the bot isn't blocked
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, solution.validate)  # Default thread executor
+    await loop.run_in_executor(None, lambda: solution.validate(hash_states=0))  # Default thread executor
 
     await ctx.message.add_reaction('✅')
     await msg.edit(content=f"Successfully validated {solution.description}")
