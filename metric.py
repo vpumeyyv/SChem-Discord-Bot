@@ -16,6 +16,10 @@ METRIC_OPS = {ast.Pow: op.pow, ast.USub: op.neg, ast.Mult: op.mul, ast.Div: op.t
               # Built-in functions must be wrapped since otherwise they don't provide arg-count inspection info
               'log': lambda x: math.log(x, 10), 'max': lambda *x: max(*x), 'min': lambda *x: min(*x),
               'floor': lambda x: math.floor(x), 'ceil': lambda x: math.ceil(x)}
+# Metric vars that require a custom runtime handler to collect.
+# We use a dict instead of a set because we want this to have a fixed order when displayed in tables.
+RUNTIME_METRIC_VARS = {'arrow_hits': None, 'rotate_hits': None, 'sync_hits': None,
+                       'bond_plus_hits': None, 'bond_minus_hits': None, 'fuse_hits': None, 'split_hits': None, 'swap_hits': None}
 # Functions for calculating values in a metric equation, given a Solution object
 METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                     'reactors': lambda soln: soln.expected_score.reactors,
@@ -25,6 +29,7 @@ METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                     'bonders': lambda soln: used_bonders(soln),
                     # Instruction counts
                     'arrows': lambda soln: num_arrows(soln),
+                    # Note the var captures in these dynamically-generated lambdas, to avoid evil lambda scope bugs.
                     **{i.name.lower() + ('s' if not i.name.endswith('S') else 'es'):  # 'bond_pluses'
                        lambda soln, instr=i: num_instrs_of_type(soln, instr)  # Default lambda arg to avoid scope issues
                        for i in InstructionType
@@ -33,6 +38,8 @@ METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                                     InstructionType.PAUSE)},
                     'bonds': lambda soln: num_instrs_of_type(soln, InstructionType.BOND_PLUS)
                                           + num_instrs_of_type(soln, InstructionType.BOND_MINUS),
+                    # Instruction HIT counts (requires passing cycle_handler_collect_instr_hit_counts to run())
+                    **{k: lambda soln, m=k: soln.custom_data[m] for k in RUNTIME_METRIC_VARS},
                     'pipe_segments': lambda soln: pipe_segments(soln),
                     'recycler_pipes': lambda soln: recycler_pipes(soln)}
                     # TODO: 'outputs': completed_outputs
@@ -55,7 +62,7 @@ def ast_vars(node):
     elif isinstance(node, ast.Call):
         return set().union(*(ast_vars(arg) for arg in node.args))
     else:
-        raise TypeError(node)
+        raise TypeError(f"ast_vars: Arg {node} is not an AST type.")
 
 
 def ast_operators(node):
@@ -79,7 +86,7 @@ def ast_operators(node):
 
         return {node.func.id}.union(*(ast_operators(arg) for arg in node.args))
     else:
-        raise TypeError(node)
+        raise TypeError(f"ast_operators: Arg {node} is not an AST type.")
 
 
 def validate_metric(metric_str):
@@ -99,7 +106,7 @@ def validate_metric(metric_str):
 
     for v in ast_vars(metric_ast):
         if v not in METRIC_VAR_TO_FN:
-            raise ValueError(f"Unknown var `{v}` in metric equation.")
+            raise ValueError(f"Unknown var `{v}` in metric equation. Allowed vars: {METRIC_VAR_TO_FN.keys()}")
 
 
 def validate_metametric(metametric_str):
@@ -137,7 +144,7 @@ def eval_ast(node, vars_dict):
     elif isinstance(node, ast.Call):
         return METRIC_OPS[node.func.id](*(eval_ast(arg, vars_dict) for arg in node.args))
     else:
-        raise TypeError(node)
+        raise TypeError(f"eval_ast: Arg {node} is not an AST type.")
 
 
 def get_metric_and_terms(soln, metric_str):
@@ -172,6 +179,11 @@ def eval_metric(soln, metric_str):
         cycles, reactors, symbols: Per usual.
         waldos: Number of non-empty waldos in the solution.
         waldopath: Number of reactor cells crossed by a waldopath
+        <instr_name>s: E.g. `arrows`, `syncs`, `bond_pluses`. Number of the given instruction.
+        <instr_name>_hits: E.g. `swap_hits`. Number of times the solution hits this instruction while run.
+                           Note that the *_hits metrics can only be measured at runtime, so their use has performance
+                           implications (e.g. loop fast-forwarding will be disabled).
+                           input_hits and output_hits are currently unavailable.
     """
     return get_metric_and_terms(soln, metric_str)[0]
 
@@ -241,6 +253,10 @@ def get_metametric_term_values(metametric_str, metametric_vars):
     rank_bonus = eval_ast(rank_ast, metametric_vars) if rank_ast is not None else None
 
     return rel_metric, rank_bonus
+
+
+def has_runtime_metrics(metric: str):
+    return not ast_vars(ast.parse(metric, mode='eval').body).isdisjoint(RUNTIME_METRIC_VARS.keys())
 
 
 def waldos(soln):
@@ -350,3 +366,44 @@ def recycler_pipes(soln):
                if isinstance(component, Recycler)
                for pipe in component.in_pipes
                if pipe is not None)
+
+
+def cycle_handler_runtime_metrics(solution):
+    """A custom handler we can pass to schem to collect the stats from RUNTIME_METRIC_VARS (which require measurement
+    during solution runtime). Pass to schem.Solution.run's cycle_handler; runs once per cycle.
+    """
+    if solution.cycle == 1:
+        solution.custom_data = {v: 0 for v in RUNTIME_METRIC_VARS}
+
+    for r, reactor in enumerate(solution.reactors):
+        red_cmd = None  # Helper to check for input stalls
+        for waldo in reactor.waldos:
+            if waldo.position in waldo.arrows:
+                arrow = waldo.arrows[waldo.position]
+                solution.custom_data['arrow_hits'] += 1
+
+            if waldo.position in waldo.commands:
+                cmd = waldo.commands[waldo.position]
+                if waldo.idx == 0:
+                    red_cmd = cmd
+
+                if cmd.type == InstructionType.BOND_PLUS:
+                    solution.custom_data['bond_plus_hits'] += 1
+                elif cmd.type == InstructionType.BOND_MINUS:
+                    solution.custom_data['bond_minus_hits'] += 1
+                elif cmd.type == InstructionType.FUSE:
+                    solution.custom_data['fuse_hits'] += 1
+                elif cmd.type == InstructionType.SPLIT:
+                    solution.custom_data['split_hits'] += 1
+                elif cmd.type == InstructionType.SWAP:
+                    solution.custom_data['swap_hits'] += 1
+                elif cmd.type == InstructionType.ROTATE and not waldo.is_rotating:  # Avoid double-counting
+                    solution.custom_data['rotate_hits'] += 1
+                elif cmd.type == InstructionType.SYNC:
+                    # We'll only count the number of times the waldos actually both synchronized, not the number of
+                    # cycles either waldo was waiting for the other.
+                    if waldo.idx == 0:  # Avoid double-count.
+                        other_waldo = reactor.waldos[1]
+                        if (other_waldo.position in other_waldo.commands
+                            and other_waldo.commands[other_waldo.position] == InstructionType.SYNC):
+                            solution.custom_data['sync_hits'] += 1

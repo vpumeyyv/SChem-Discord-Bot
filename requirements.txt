@@ -1,5 +1,5 @@
 discord>=1.0.1,<2.0.0
 python-dotenv>=0.15.0
 python-slugify>=4.0.0
-schem>=0.30.0
+schem>=0.34.0
 plotly>=4.14.3

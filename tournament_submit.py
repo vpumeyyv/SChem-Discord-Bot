@@ -11,7 +11,7 @@ import discord
 from discord.ext import commands
 import schem
 
-from metric import eval_metric
+from metric import eval_metric, has_runtime_metrics, cycle_handler_runtime_metrics
 from tournament_base import BaseTournament, is_tournament_host
 
 
@@ -192,26 +192,30 @@ class TournamentSubmit(BaseTournament):
                     # Prefix the solution name with "[author] " for readability on import
                     solution.name = f"[{author}]" if soln_name is None else f"[{author}] {soln_name}"
 
+                    # If the metric contains any special vars that require runtime-measurement, pass a corresponding
+                    # handler to Solution.validate.
+                    metric = round_metadata['metric']
+                    cycle_handler = cycle_handler_runtime_metrics if has_runtime_metrics(metric) else None
+
                     # Call the SChem validator in a thread so the bot isn't blocked
-                    # TODO: Provide max_cycles arg based on the round
                     # TODO: ProcessPoolExecutor might be more appropriate instead of the default (thread pool), but not
                     #  sure if the overhead for many small submissions is going to add up more than with threads and/or
                     #  if limitations on number of processes is the bigger factor
                     max_cycles = round_metadata['max_cycles'] if 'max_cycles' in round_metadata else self.DEFAULT_MAX_CYCLES
+                    hash_states = 1000  # Unfortunate side effect of run_in_executor, can't use keyword args...
                     loop = asyncio.get_event_loop()
-                    await loop.run_in_executor(None, solution.validate, max_cycles)  # Default thread pool executor
+                    await loop.run_in_executor(None, solution.validate, max_cycles, hash_states, cycle_handler)  # Default thread pool executor
                     # TODO: if metric uses 'outputs' as a var, we should instead catch any run errors (or just
                     #       PauseException, to taste) and pass the post-run solution object to eval_metric regardless
 
                     # Calculate the solution's metric score
-                    metric = round_metadata['metric']
                     soln_metric_score = eval_metric(solution, metric)
 
                     await msg.edit(content=f"Successfully validated {soln_descr}, metric score: {round(soln_metric_score, 3)}"
                                            f"\n{self.puzzle_deadline_str(round_metadata)}.")
 
                     # Update solutions.txt
-                    # To ensure async-safe file-writing, we may need to read the file twice: the first time to ask
+                    # To ensure async-safe file-writing, we may need to read the file(s) twice: the first time to ask
                     # the user if they're ok with regressing their metric, and the second to make sure we pick up any
                     # updates to the file that happened while we were waiting for the user to confirm the regression.
                     # If there's no regression the second read can be avoided.
@@ -219,6 +223,12 @@ class TournamentSubmit(BaseTournament):
                     # the regression even if e.g. a team member just made their regression even bigger... but that
                     # should be acceptable given they were ok with any regression at all
                     for i in range(2):
+                        # If the puzzle has any runtime metrics, we store the runtime metric vars in an extra file so we
+                        # don't have to re-run the solution later.
+                        if has_runtime_metrics(metric):
+                            with open(round_dir / 'runtime_metrics.json', 'r', encoding='utf-8') as f:
+                                runtime_metrics = json.load(f)
+
                         with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as f:
                             solns_str = f.read()
 
@@ -235,7 +245,12 @@ class TournamentSubmit(BaseTournament):
                                 # sub-optimal for style/meme/whatever reasons)
                                 # Note: This re-does the work of calculating the old metric but is simpler and allows
                                 #       the TO to modify the metric after the puzzle opens if necessary
-                                old_metric_score = eval_metric(schem.Solution(cur_soln_str, level=level), metric)
+                                old_solution = schem.Solution(cur_soln_str, level=level)
+                                # Stuff old runtime metrics in as needed
+                                if has_runtime_metrics(metric):
+                                    assert author in runtime_metrics, "You're in solutions.txt but not runtime_metrics.json, yell at Zig"
+                                    old_solution.custom_data = runtime_metrics[author]
+                                old_metric_score = eval_metric(old_solution, metric)
                                 if soln_metric_score > old_metric_score:
                                     await ctx.message.add_reaction('⚠')
 
@@ -247,6 +262,7 @@ class TournamentSubmit(BaseTournament):
                                     if not await self.wait_for_confirmation(ctx, confirm_msg):
                                         await ctx.message.add_reaction('❌')
                                         return
+
                                     break
                             else:
                                 new_soln_strs.append(cur_soln_str)
@@ -258,6 +274,11 @@ class TournamentSubmit(BaseTournament):
                     with open(round_dir / 'solutions.txt', 'w', encoding='utf-8') as f:
                         # Make sure not to write windows newlines or python will double the carriage returns
                         f.write('\n'.join(new_soln_strs))
+
+                    if has_runtime_metrics(metric):
+                        runtime_metrics[author] = solution.custom_data
+                        with open(round_dir / 'runtime_metrics.json', 'w', encoding='utf-8') as f:
+                            json.dump(runtime_metrics, f, ensure_ascii=False, indent=4)
 
                     # Write the submission time, score, metric, and any comment to this author's submission history
                     with open(round_dir / 'submissions_history.json', 'r', encoding='utf-8') as f:
@@ -421,6 +442,11 @@ class TournamentSubmit(BaseTournament):
             with open(round_dir / 'solutions.txt', 'r', encoding='utf-8') as f:
                 solns_str = f.read()
 
+            runtime_metrics = None
+            if has_runtime_metrics(round_metadata['metric']):
+                with open(round_dir / 'runtime_metrics.json', 'r', encoding='utf-8') as f:
+                    runtime_metrics = json.load(f)[submit_name]
+
             has_scoring = False
             for soln_str in schem.Solution.split_solutions(solns_str):
                 _, cur_author, score, soln_name = schem.Solution.parse_metadata(soln_str)
@@ -430,7 +456,9 @@ class TournamentSubmit(BaseTournament):
                     reply += f"\n{indent}Scoring submission: {score}"
                     if soln_name is not None:
                         reply += ' ' + soln_name
-                    reply += f", Metric Score: {eval_metric(schem.Solution(soln_str, level=level), round_metadata['metric'])}"
+                    solution = schem.Solution(soln_str, level=level)
+                    solution.custom_data = runtime_metrics
+                    reply += f", Metric Score: {eval_metric(solution, round_metadata['metric'])}"
                     break
             if not has_scoring:
                 reply += f"\n{indent}No scoring submission."

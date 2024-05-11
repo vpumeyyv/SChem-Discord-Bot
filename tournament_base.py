@@ -13,7 +13,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 import schem
 
-from metric import get_metric_and_terms, eval_metametric, get_metametric_term_values
+from metric import get_metric_and_terms, eval_metametric, get_metametric_term_values, has_runtime_metrics
 from stats import pareto_graph, metric_over_time
 from utils import split_by_char_limit, format_date, format_timedelta, wait_until
 
@@ -123,7 +123,7 @@ class BaseTournament(commands.Cog):
     #     slugified_tournament_name_2/
     #     ...
 
-    TOURNAMENTS_DIR = Path(__file__).parent / 'tournaments'  # Left relative so that filesystem paths can't leak into bot msgs
+    TOURNAMENTS_DIR = Path('tournaments')  # Left relative so that filesystem paths can't leak into bot msgs
     ACTIVE_TOURNAMENT_FILE = TOURNAMENTS_DIR / 'active_tournament.txt'
 
     # Lock to ensure async calls don't overwrite each other
@@ -174,6 +174,8 @@ class BaseTournament(commands.Cog):
                     and reaction_event.user_id == ctx.message.author.id
                     and str(reaction_event.emoji) in (confirm_react, cancel_react))
 
+        await confirm_msg.add_reaction(cancel_react)
+        await confirm_msg.add_reaction(confirm_react)
         try:
             # reaction_add doesn't work in DMs without the `members` intent given to the Bot constructor, which we don't
             # really need (see https://discordpy.readthedocs.io/en/latest/api.html#discord.on_reaction_add)
@@ -242,18 +244,20 @@ class BaseTournament(commands.Cog):
         missing_ok: If True, return None if the puzzle is missing; else raise exception. Default True.
         """
         lower_name = round_or_puzzle_name.lower()
+        lower_name_unquoted = round_or_puzzle_name.lower().strip('"').strip('`').strip("'")
         for cur_puzzle_name, round_metadata in tournament_metadata['rounds'].items():
+            candidate_matches = (cur_puzzle_name.lower(),
+                                 round_metadata['round_name'].lower(),
+                                 ''.join(s[0].lower() if not s.replace('.', '', 1).isdigit() else s
+                                         for s in round_metadata['round_name'].split()))
             if ((is_host or 'start_post' in round_metadata)
-                    and lower_name in (cur_puzzle_name.lower(),
-                                       round_metadata['round_name'].lower(),
-                                       ''.join(s[0].lower() if not s.replace('.', '', 1).isdigit() else s
-                                               for s in round_metadata['round_name'].split()))):
+                    and (lower_name in candidate_matches or lower_name_unquoted in candidate_matches)):
                 return cur_puzzle_name
 
         if missing_ok:
             return None
 
-        raise FileNotFoundError(f"No known puzzle/round ~= `{round_or_puzzle_name}`")
+        raise ValueError(f"No known puzzle/round ~= `{round_or_puzzle_name}`")
 
     @staticmethod
     def get_level(round_dir):
@@ -326,9 +330,12 @@ class BaseTournament(commands.Cog):
 
     def rename_submissions_by(self, round_dir: Path, puzzle_name: str, author: str, new_author: str):
         """Update all submissions in the given round by the specified author, to the new author name."""
+        if author == new_author:
+            raise ValueError("Can't rename to same name")
+
         with self.puzzle_submission_locks[puzzle_name]:
             for solns_file in (round_dir / 'solutions.txt', round_dir / 'solutions_fun.txt'):
-                with open(solns_file, encoding='utf-8') as f:
+                with open(solns_file, 'r', encoding='utf-8') as f:
                     solns_str = f.read()
 
                 new_soln_strs = []
@@ -346,6 +353,17 @@ class BaseTournament(commands.Cog):
 
                 with open(solns_file, 'w', encoding='utf-8') as f:
                     f.write('\n'.join(new_soln_strs))
+
+            if (round_dir / 'runtime_metrics.json').is_file():
+                with open(round_dir / 'runtime_metrics.json', 'r', encoding='utf-8') as f:
+                    runtime_metrics = json.load(f)
+
+                if author in runtime_metrics:
+                    runtime_metrics[new_author] = runtime_metrics[author]
+                    del runtime_metrics[author]
+
+                with open(round_dir / 'runtime_metrics.json', 'w', encoding='utf-8') as f:
+                    json.dump(runtime_metrics, f, ensure_ascii=False, indent=4)
 
     def rename_author_in_history(self, round_dir: Path, puzzle_name: str, author: str, new_author: str):
         """Update a submitter name (team or nickname) in the given round's submission history file."""
@@ -619,6 +637,17 @@ class BaseTournament(commands.Cog):
 
         soln_strs = list(schem.Solution.split_solutions(solns_str))
         solutions = [schem.Solution(soln_str, level=level) for soln_str in soln_strs]
+
+        # Stuff any saved runtime metrics into the solution objects so we don't have to re-run them
+        if has_runtime_metrics(round_metadata['metric']):
+            with open(round_dir / 'runtime_metrics.json', 'r', encoding='utf-8') as f:
+                runtime_metrics = json.load(f)
+
+            for solution in solutions:
+                if solution.author not in runtime_metrics:
+                    raise Exception(f"Player {solution.author} is in solutions.txt but not runtime_metrics.json; holler for Zig")
+
+                solution.custom_data = runtime_metrics[solution.author]
 
         # Calculate each score and the top score
         metric_scores_and_terms = [get_metric_and_terms(solution, round_metadata['metric']) for solution in solutions]

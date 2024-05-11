@@ -51,11 +51,11 @@ def process_start_end_dates(start, end, check_start_in_future=True):
     cur_dt = datetime.now(timezone.utc)
 
     if check_start_in_future and start_dt < cur_dt:
-        raise ValueError("Start time is in past.")
+        raise ValueError(f"Start time is in past (it is currently {format_date(cur_dt.isoformat())}).")
     elif end_dt <= start_dt:
         raise ValueError("End time is not after start time.")
     elif end_dt < cur_dt:
-        raise ValueError("End time is in past.")
+        raise ValueError(f"End time is in past (it is currently {format_date(cur_dt.isoformat())}).")
 
     return start_dt.isoformat(), end_dt.isoformat()
 

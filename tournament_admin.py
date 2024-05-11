@@ -13,7 +13,7 @@ from discord.ext import commands
 import schem
 from slugify import slugify
 
-from metric import validate_metric, validate_metametric
+from metric import validate_metric, validate_metametric, has_runtime_metrics, cycle_handler_runtime_metrics
 from tournament_base import PuzzleSubmissionsLock, BaseTournament, ANNOUNCEMENTS_CHANNEL_ID, is_bot_admin, is_tournament_host
 from utils import process_start_end_dates, format_date, split_by_char_limit
 
@@ -382,7 +382,11 @@ class TournamentAdmin(BaseTournament):
                 score divided by this metric score.
                 Allowed terms: <Any real number>, cycles, reactors, symbols,
                                waldopath, waldos, bonders, arrows, flip_flops,
-                               sensors, syncs.
+                               sensors, syncs, OR:
+                               `<instr_name>s`: E.g. `arrows`, `syncs`, `bond_pluses`.
+                               Number of the given instruction.
+                               OR: `<instr_name>_hits`: E.g. `swap_hits`.
+                               Number of times the solution hits this instruction.
                 Allowed operators/fns: ^ (or **), /, *, +, -, max(), min(),
                                        log() (base 10)
                 Parsed with standard operator precedence (BEDMAS).
@@ -473,6 +477,10 @@ class TournamentAdmin(BaseTournament):
                 (round_dir / 'description.txt').touch()
             (round_dir / 'solutions.txt').touch()
             (round_dir / 'solutions_fun.txt').touch()
+            # If the metric contains any runtime metrics, add a file for storing them to avoid solution re-runs.
+            if has_runtime_metrics(metric):
+                with open(round_dir / 'runtime_metrics.json', 'w', encoding='utf-8') as f:
+                    json.dump({}, f, ensure_ascii=False, indent=4)
 
             # Copy the currently-active teams from the tournament directory
             shutil.copy(tournament_dir / 'teams.json', round_dir / 'teams.json')
@@ -625,6 +633,7 @@ class TournamentAdmin(BaseTournament):
                     round_metadata[k] = v
 
             try:
+                # TODO: Also trigger this re-check if max_cycles changes, removing now-invalidated solutions.
                 if new_puzzle_file:
                     new_level_code = (await self.read_attachment(new_puzzle_file, extension='.puzzle')).strip().replace("\r\n", "\n")
                     level = schem.Level(new_level_code)
@@ -660,6 +669,8 @@ class TournamentAdmin(BaseTournament):
                         loop = asyncio.get_event_loop()
                         invalid_soln_authors = set()
                         valid_soln_strs = {}
+                        _has_runtime_metrics = has_runtime_metrics(round_metadata['metric'])
+                        new_runtime_metrics = {}
 
                         for solns_file_name in ('solutions.txt', 'solutions_fun.txt'):
                             solns_file = round_dir / solns_file_name
@@ -672,13 +683,16 @@ class TournamentAdmin(BaseTournament):
 
                             for soln_str in schem.Solution.split_solutions(solns_str):
                                 _, author_name, _, _ = schem.Solution.parse_metadata(soln_str)
+                                max_cycles = round_metadata['max_cycles'] if 'max_cycles' in round_metadata else self.DEFAULT_MAX_CYCLES
+                                hash_states = 1000  # Unfortunate side effect of run_in_executor, can't use keyword args...
+                                cycle_handler = cycle_handler_runtime_metrics if _has_runtime_metrics else None
 
                                 # Call the SChem validator in a thread so the bot isn't blocked
                                 # TODO: If/when 'outputs' is a metric term, will need to update this similarly to submit to
                                 #       allow partial solutions in its presence
                                 try:
                                     solution = schem.Solution(soln_str, level=level)
-                                    await loop.run_in_executor(None, solution.validate)
+                                    await loop.run_in_executor(None, solution.validate, max_cycles, hash_states, cycle_handler)
                                 except Exception:
                                     invalid_soln_authors.add(author_name)
                                     continue
@@ -687,6 +701,8 @@ class TournamentAdmin(BaseTournament):
                                 #       solution's level name
 
                                 valid_soln_strs[solns_file_name].append(soln_str)
+                                if _has_runtime_metrics and solns_file_name == 'solutions.txt':
+                                    new_runtime_metrics[author_name] = solution.custom_data
 
                         # Prepare a new announcement post and the puzzle file to attach
                         # Pass the attached puzzle file instead of using the round's
@@ -755,6 +771,10 @@ class TournamentAdmin(BaseTournament):
                         for solns_file_name, cur_soln_strs in valid_soln_strs.items():
                             with open(round_dir / solns_file_name, 'w', encoding='utf-8') as f:
                                 f.write('\n'.join(cur_soln_strs))
+
+                        # Update runtime_metrics.json
+                        with open(round_dir / 'runtime_metrics.json', 'w', encoding='utf-8') as f:
+                            json.dump(new_runtime_metrics, f, ensure_ascii=False, indent=4)
 
                     # Make the changes-summary post and edit the original announcement post or make the new post if
                     # the puzzle file changed
