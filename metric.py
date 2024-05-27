@@ -19,7 +19,8 @@ METRIC_OPS = {ast.Pow: op.pow, ast.USub: op.neg, ast.Mult: op.mul, ast.Div: op.t
 # Metric vars that require a custom runtime handler to collect.
 # We use a dict instead of a set because we want this to have a fixed order when displayed in tables.
 RUNTIME_METRIC_VARS = {'arrow_hits': None, 'rotate_hits': None, 'sync_hits': None,
-                       'bond_plus_hits': None, 'bond_minus_hits': None, 'fuse_hits': None, 'split_hits': None, 'swap_hits': None}
+                       'bond_plus_hits': None, 'bond_minus_hits': None, 'fuse_hits': None, 'split_hits': None, 'swap_hits': None,
+                       'piped_molecules': None}
 # Functions for calculating values in a metric equation, given a Solution object
 METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                     'reactors': lambda soln: soln.expected_score.reactors,
@@ -38,10 +39,11 @@ METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                                     InstructionType.PAUSE)},
                     'bonds': lambda soln: num_instrs_of_type(soln, InstructionType.BOND_PLUS)
                                           + num_instrs_of_type(soln, InstructionType.BOND_MINUS),
-                    # Instruction HIT counts (requires passing cycle_handler_collect_instr_hit_counts to run())
+                    # Runtime metrics (requires passing cycle_handler_collect_instr_hit_counts to run())
                     **{k: lambda soln, m=k: soln.custom_data[m] for k in RUNTIME_METRIC_VARS},
                     'pipe_segments': lambda soln: pipe_segments(soln),
-                    'recycler_pipes': lambda soln: recycler_pipes(soln)}
+                    'recycler_pipes': lambda soln: recycler_pipes(soln),
+                    'symbol_footprint': lambda soln: symbol_footprint(soln)}
                     # TODO: 'outputs': completed_outputs
                     #       requires modifications to tournament validator to accept solutions without an expected
                     #       score if the metric contains 'outputs', and to eval the metric even if the solution crashes
@@ -368,6 +370,19 @@ def recycler_pipes(soln):
                if pipe is not None)
 
 
+def symbol_footprint(soln):
+    """Return the number of reactor tiles that have a symbol on them. Like waldopath but ignoring empty paths."""
+    total = 0
+    for reactor in soln.reactors:
+        symbol_posns = set()
+        for waldo in reactor.waldos:
+            symbol_posns.update(waldo.arrows)
+            symbol_posns.update(waldo.commands)
+        total += len(symbol_posns)
+
+    return total
+
+
 def cycle_handler_runtime_metrics(solution):
     """A custom handler we can pass to schem to collect the stats from RUNTIME_METRIC_VARS (which require measurement
     during solution runtime). Pass to schem.Solution.run's cycle_handler; runs once per cycle.
@@ -407,3 +422,33 @@ def cycle_handler_runtime_metrics(solution):
                         if (other_waldo.position in other_waldo.commands
                             and other_waldo.commands[other_waldo.position] == InstructionType.SYNC):
                             solution.custom_data['sync_hits'] += 1
+
+    # Piped molecules
+    if solution.cycle == 1:
+        solution.custom_data['piped_molecules'] = 0
+        solution.custom_data['_empty_pipes'] = set()
+
+        # The below code will miss any molecules piped on the last cycle. This would be fine if consistent, but
+        # multiple outputs on the last cycle could save 1 piped_molecule over other solutions.
+        # To avoid this gaming, we'll simply disallow 1-long pipes going to outputs.
+        # Note that this also makes the metric nonsense in research levels, which it is.
+        for output in solution.outputs:
+            if len(output.in_pipe) == 1:
+                raise ValueError("Due to technical limitations, 1-long pipes to outputs are disallowed in piped_molecules metric puzzles.")
+
+    for reactor in solution.reactors:
+        for pipe in reactor.out_pipes:
+            if ((pipe._add_cycles and pipe._add_cycles[0] == solution.cycle - 1)
+                # If the pipe was empty last we checked but it just outputted, it's
+                # a 1-long pipe and we missed its instant input-ouput cycle.
+                or (pipe in solution.custom_data['_empty_pipes']
+                    and pipe._last_pop_cycle == solution.cycle - 1)):
+                solution.custom_data['piped_molecules'] += 1
+
+            # To detect 1-long pipe same-cycle in-outs without double-counting,
+            # track whether the pipe was empty last cycle
+            if len(pipe) == 1:
+                if len(pipe._molecules) == 0:
+                    solution.custom_data['_empty_pipes'].add(pipe)
+                else:
+                    solution.custom_data['_empty_pipes'].discard(pipe)

@@ -276,6 +276,11 @@ class TournamentSubmit(BaseTournament):
                         f.write('\n'.join(new_soln_strs))
 
                     if has_runtime_metrics(metric):
+                        # Delete any temporary vars (we don't need them and they might not serialize)
+                        for k in list(solution.custom_data.keys()):
+                            if k.startswith('_'):
+                                del solution.custom_data[k]
+
                         runtime_metrics[author] = solution.custom_data
                         with open(round_dir / 'runtime_metrics.json', 'w', encoding='utf-8') as f:
                             json.dump(runtime_metrics, f, ensure_ascii=False, indent=4)

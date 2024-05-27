@@ -702,6 +702,11 @@ class TournamentAdmin(BaseTournament):
 
                                 valid_soln_strs[solns_file_name].append(soln_str)
                                 if _has_runtime_metrics and solns_file_name == 'solutions.txt':
+                                    # Delete any temporary vars (we don't need them and they might not serialize)
+                                    for k in list(solution.custom_data.keys()):
+                                        if k.startswith('_'):
+                                            del solution.custom_data[k]
+
                                     new_runtime_metrics[author_name] = solution.custom_data
 
                         # Prepare a new announcement post and the puzzle file to attach
