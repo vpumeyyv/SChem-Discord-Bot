@@ -37,13 +37,22 @@ METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                        # Exclude the weird ones and inputs/outputs since they should be reserved for molecules
                        if i not in (InstructionType.START, InstructionType.INPUT, InstructionType.OUTPUT,
                                     InstructionType.PAUSE)},
+                    # _instrs suffix for these to avoid sounding like 'number of input molecules'
+                    'input_instrs': lambda soln: num_instrs_of_type(soln, InstructionType.INPUT),
+                    'output_instrs': lambda soln: num_instrs_of_type(soln, InstructionType.OUTPUT),
+                    # Puzzle requirements continue to get weirder with every year...
+                    'alpha_input_instrs': lambda soln: num_instrs_of_type(soln, InstructionType.INPUT, target_idx=0),
+                    'beta_input_instrs': lambda soln: num_instrs_of_type(soln, InstructionType.INPUT, target_idx=1),
+                    'psi_output_instrs': lambda soln: num_instrs_of_type(soln, InstructionType.OUTPUT, target_idx=0),
+                    'omega_output_instrs': lambda soln: num_instrs_of_type(soln, InstructionType.OUTPUT, target_idx=1),
                     'bonds': lambda soln: num_instrs_of_type(soln, InstructionType.BOND_PLUS)
                                           + num_instrs_of_type(soln, InstructionType.BOND_MINUS),
-                    # Runtime metrics (requires passing cycle_handler_collect_instr_hit_counts to run())
-                    **{k: lambda soln, m=k: soln.custom_data[m] for k in RUNTIME_METRIC_VARS},
                     'pipe_segments': lambda soln: pipe_segments(soln),
                     'recycler_pipes': lambda soln: recycler_pipes(soln),
-                    'symbol_footprint': lambda soln: symbol_footprint(soln)}
+                    'symbol_footprint': lambda soln: symbol_footprint(soln),
+                    'max_symbol_footprint': lambda soln: max_symbol_footprint(soln),
+                    # Runtime metrics (requires passing cycle_handler_collect_instr_hit_counts to run())
+                    **{k: lambda soln, m=k: soln.custom_data[m] for k in RUNTIME_METRIC_VARS}}
                     # TODO: 'outputs': completed_outputs
                     #       requires modifications to tournament validator to accept solutions without an expected
                     #       score if the metric contains 'outputs', and to eval the metric even if the solution crashes
@@ -347,13 +356,14 @@ def num_arrows(soln):
     return sum(len(waldo.arrows) for reactor in soln.reactors for waldo in reactor.waldos)
 
 
-def num_instrs_of_type(soln, instr_type):
-    """Return the number of non-arrow instructions of the given type in the solution."""
+def num_instrs_of_type(soln, instr_type, target_idx=None):
+    """Return the number of non-arrow instructions of the given type (and optionally target_idx) in the solution."""
     return sum(1
                for reactor in soln.reactors
                for waldo in reactor.waldos
                for cmd in waldo.commands.values()
-               if cmd.type == instr_type)
+               if cmd.type == instr_type
+               and (target_idx is None or cmd.target_idx == target_idx))
 
 
 def completed_outputs(soln):
@@ -381,6 +391,19 @@ def symbol_footprint(soln):
         total += len(symbol_posns)
 
     return total
+
+
+def max_symbol_footprint(soln):
+    """Return the maximum symbol_footprint of any single reactor."""
+    max_footprint = 0
+    for reactor in soln.reactors:
+        symbol_posns = set()
+        for waldo in reactor.waldos:
+            symbol_posns.update(waldo.arrows)
+            symbol_posns.update(waldo.commands)
+        max_footprint = max(max_footprint, len(symbol_posns))
+
+    return max_footprint
 
 
 def cycle_handler_runtime_metrics(solution):

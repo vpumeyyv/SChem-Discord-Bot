@@ -125,6 +125,12 @@ class TestGame(unittest.TestCase):
         self.assertEqual(metric.eval_metric(soln, "waldopath"), 53, "Incorrect waldopath metric")
         self.assertEqual(metric.eval_metric(soln, "bonders"), 4, "Incorrect bonders metric")
         self.assertEqual(metric.eval_metric(soln, "arrows"), 34, "Incorrect arrows metric")
+        self.assertEqual(metric.eval_metric(soln, "input_instrs"), 8, "Incorrect input_instrs metric")
+        self.assertEqual(metric.eval_metric(soln, "alpha_input_instrs"), 3, "Incorrect alpha_input_instrs metric")
+        self.assertEqual(metric.eval_metric(soln, "beta_input_instrs"), 5, "Incorrect beta_input_instrs metric")
+        self.assertEqual(metric.eval_metric(soln, "output_instrs"), 4, "Incorrect output_instrs metric")
+        self.assertEqual(metric.eval_metric(soln, "psi_output_instrs"), 2, "Incorrect psi_output_instrs metric")
+        self.assertEqual(metric.eval_metric(soln, "omega_output_instrs"), 2, "Incorrect omega_output_instrs metric")
         self.assertEqual(metric.eval_metric(soln, "flip_flops"), 1, "Incorrect flip_flops metric")
         self.assertEqual(metric.eval_metric(soln, "senses"),  5, "Incorrect senses metric")
         self.assertEqual(metric.eval_metric(soln, "rotates"), 3, "Incorrect rotates metric")
@@ -135,7 +141,9 @@ class TestGame(unittest.TestCase):
         self.assertEqual(metric.eval_metric(soln, "fuses"), 0, "Incorrect fuses metric")
         self.assertEqual(metric.eval_metric(soln, "splits"), 0, "Incorrect splits metric")
         self.assertEqual(metric.eval_metric(soln, "swaps"), 0, "Incorrect swaps metric")
-        self.assertEqual(metric.eval_metric(soln, "recycler_pipes"),  0, "Incorrect recycler_pipes metric")
+        self.assertEqual(metric.eval_metric(soln, "recycler_pipes"), 0, "Incorrect recycler_pipes metric")
+        self.assertEqual(metric.eval_metric(soln, "symbol_footprint"), 47, "Incorrect symbol_footprint metric")
+        self.assertEqual(metric.eval_metric(soln, "max_symbol_footprint"), 47, "Incorrect max_symbol_footprint metric")
 
 
 if __name__ == '__main__':
