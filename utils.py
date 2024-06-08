@@ -67,17 +67,11 @@ def format_date(s):
     return f"<t:{int(parse_datetime_str(s).timestamp())}>"  # Epoch/Unix time
 
 
-def format_timedelta(td: timedelta):
-    """Given a time delta, return a user-friendly string of days + hours if it is > 1 day, hours + mins
-    if it is > 1 min, or seconds if it is <= 1 min.
+def format_date_relative(s):
+    """Return the given datetime string (expected to be UTC and as returned by datetime.isoformat()) as discord's
+    relative datetime widget.
     """
-    # Note that timedelta stores the time as days + seconds + microseconds internally
-    if td.days >= 1:
-        return f"{td.days} days, {td.seconds // 3600} hours"
-    elif td.seconds >= 60:
-        return f"{td.seconds // 3600} hours, {(td.seconds // 60) % 60} mins"
-    else:
-        return f"{td.seconds} seconds"
+    return f"<t:{int(parse_datetime_str(s).timestamp())}:R>"  # Epoch/Unix time
 
 
 async def wait_until(dt):

@@ -15,7 +15,7 @@ import schem
 
 from metric import get_metric_and_terms, eval_metametric, get_metametric_term_values, has_runtime_metrics
 from stats import pareto_graph, metric_over_time
-from utils import split_by_char_limit, format_date, format_timedelta, wait_until
+from utils import split_by_char_limit, format_date, format_date_relative, wait_until
 
 load_dotenv()
 
@@ -275,11 +275,7 @@ class BaseTournament(commands.Cog):
     @staticmethod
     def puzzle_deadline_str(round_metadata):
         """Return a string describing how long remains until a puzzle deadline."""
-        remaining_time = datetime.fromisoformat(round_metadata['end']) - datetime.now(timezone.utc)
-        if remaining_time.total_seconds() > 0:
-            return f"Deadline in {format_timedelta(remaining_time)}"
-
-        return "Deadline has passed"
+        return f"Deadline {format_date_relative(round_metadata['end'])}"
 
     @staticmethod
     def get_submit_history(round_dir, authors=None, sort_by_date=False, raw_timestamps=False):
