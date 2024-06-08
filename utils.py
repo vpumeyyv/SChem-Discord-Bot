@@ -64,7 +64,7 @@ def format_date(s):
     """Return the given datetime string (expected to be UTC and as returned by datetime.isoformat()) in a more
     friendly format.
     """
-    return f"<t:{parse_datetime_str(s).timestamp()}>"  # Epoch/Unix time
+    return f"<t:{int(parse_datetime_str(s).timestamp())}>"  # Epoch/Unix time
 
 
 def format_timedelta(td: timedelta):
