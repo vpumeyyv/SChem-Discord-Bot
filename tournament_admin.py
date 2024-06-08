@@ -380,13 +380,23 @@ class TournamentAdmin(BaseTournament):
         metric: The equation a player should minimize.
                 A player's final score for the round will be the top metric
                 score divided by this metric score.
-                Allowed terms: <Any real number>, cycles, reactors, symbols,
-                               waldopath, waldos, bonders, arrows, flip_flops,
-                               sensors, syncs, OR:
-                               `<instr_name>s`: E.g. `arrows`, `syncs`, `bond_pluses`.
-                               Number of the given instruction.
-                               OR: `<instr_name>_hits`: E.g. `swap_hits`.
-                               Number of times the solution hits this instruction.
+                Allowed terms:
+                    <Any real number>, cycles, reactors, symbols, waldos, waldopath, bonders.
+
+                    Instr counts:
+                        arrows, grabs, drops, grab_drops, rotates, syncs, senses, flip_flops,
+                        bonds, bond_pluses, bond_minuses, fuses, splits, swaps,
+                        input_instrs, output_instrs, <zone>_input_instrs, <zone>_output_instrs.
+                    Instr hit counts:
+                        arrow_hits, sync_hits, rotate_hits, bond_plus_hits, bond_minus_hits,
+                        fuse_hits, split_hits, swap_hits.
+                    Misc:
+                        pipe_segments: How many pipe segments the solution has.
+                        recycler_pipes: Number of pipes attached to a recycler.
+                        piped_molecules: How many times a molecule got sent from a reactor into a pipe.
+                        symbol_footprint: Count of reactor cells with any symbol in them.
+                        max_symbol_footprint: The max symbol_footprint found in any one reactor.
+
                 Allowed operators/fns: ^ (or **), /, *, +, -, max(), min(),
                                        log() (base 10)
                 Parsed with standard operator precedence (BEDMAS).
