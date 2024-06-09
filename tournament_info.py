@@ -9,7 +9,7 @@ import discord
 from discord.ext import commands
 
 from tournament_base import BaseTournament, is_tournament_host
-from utils import format_date
+from utils import format_date, discord_date
 
 
 class TournamentInfo(BaseTournament):
@@ -49,8 +49,8 @@ class TournamentInfo(BaseTournament):
                 elif is_host:
                     # Allow the TO to see schedule info on upcoming puzzles
                     embed.description += f"\n{round_metadata['round_name']}, {puzzle_name}:" \
-                                         + f" Start: {format_date(round_metadata['start'])}" \
-                                         + f" | End: {format_date(round_metadata['end'])}"
+                                         + f" Start: {discord_date(round_metadata['start'])}" \
+                                         + f" | End: {discord_date(round_metadata['end'])}"
 
             await ctx.send(embed=embed)
 
@@ -76,8 +76,8 @@ class TournamentInfo(BaseTournament):
             else:
                 embed.description += f" {self.puzzle_deadline_str(round_metadata)}"
         else:
-            embed.description = f"Start: {format_date(round_metadata['start'])}" \
-                                + f" | End: {format_date(round_metadata['end'])}"
+            embed.description = f"Start: {discord_date(round_metadata['start'])}" \
+                                + f" | End: {discord_date(round_metadata['end'])}"
 
         await ctx.send(embed=embed)
 
@@ -149,7 +149,7 @@ class TournamentInfo(BaseTournament):
             assert 'start_post' not in tournament_metadata, "Round/puzzle name required for previews during tournament."
 
             # Preview the tournament announcement post
-            await ctx.send(f"On {format_date(tournament_metadata['start'])} the following announcement will be sent:")
+            await ctx.send(f"On {discord_date(tournament_metadata['start'])} the following announcement will be sent:")
             for msg_string in self.tournament_announcement(tournament_dir, tournament_metadata):
                 await ctx.send(msg_string)
 
@@ -161,7 +161,7 @@ class TournamentInfo(BaseTournament):
 
         if 'start_post' not in round_metadata:
             # Preview the puzzle start announcement post
-            await ctx.send(f"On {format_date(round_metadata['start'])} the following announcement will be sent:")
+            await ctx.send(f"On {discord_date(round_metadata['start'])} the following announcement will be sent:")
             embed, attachment = self.round_announcement(tournament_dir, tournament_metadata, puzzle_name)
             await ctx.send(embed=embed, file=attachment)
             return
@@ -169,7 +169,7 @@ class TournamentInfo(BaseTournament):
         # Otherwise preview the puzzle results post
         assert 'end_post' not in round_metadata, f"{round_metadata['round_name']} is already closed; nothing to preview."
 
-        await ctx.send(f"On {format_date(round_metadata['end'])} (+ 5 min for banter) the following announcement"
+        await ctx.send(f"On {discord_date(round_metadata['end'])} (+ 5 min for banter) the following announcement"
                        " will be sent:")
 
         # Send each of the sub-2000 char announcement messages, adding the attachments to the last one

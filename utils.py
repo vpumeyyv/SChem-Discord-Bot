@@ -51,27 +51,25 @@ def process_start_end_dates(start, end, check_start_in_future=True):
     cur_dt = datetime.now(timezone.utc)
 
     if check_start_in_future and start_dt < cur_dt:
-        raise ValueError(f"Start time is in past (it is currently {format_date(cur_dt.isoformat())}).")
+        raise ValueError(f"Start time is in past (it is currently {discord_date(cur_dt.isoformat())}).")
     elif end_dt <= start_dt:
         raise ValueError("End time is not after start time.")
     elif end_dt < cur_dt:
-        raise ValueError(f"End time is in past (it is currently {format_date(cur_dt.isoformat())}).")
+        raise ValueError(f"End time is in past (it is currently {discord_date(cur_dt.isoformat())}).")
 
     return start_dt.isoformat(), end_dt.isoformat()
 
 
-def format_date(s):
+def format_date(s: str) -> str:
     """Return the given datetime string (expected to be UTC and as returned by datetime.isoformat()) in a more
     friendly format.
     """
-    return f"<t:{int(parse_datetime_str(s).timestamp())}>"  # Epoch/Unix time
+    return ' '.join(s[:16].split('T')) + ' UTC'  # Remove T and the seconds field, and replace '+00:00' with ' UTC'
 
 
-def format_date_relative(s):
-    """Return the given datetime string (expected to be UTC and as returned by datetime.isoformat()) as discord's
-    relative datetime widget.
-    """
-    return f"<t:{int(parse_datetime_str(s).timestamp())}:R>"  # Epoch/Unix time
+def discord_date(s: str, relative=False) -> str:
+    """Return a discord widget for the given datetime string (expected to be UTC and as returned by datetime.isoformat())."""
+    return f"<t:{int(parse_datetime_str(s).timestamp())}{':R' if relative else ''}>"  # Epoch/Unix time
 
 
 async def wait_until(dt):

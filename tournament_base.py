@@ -15,7 +15,7 @@ import schem
 
 from metric import get_metric_and_terms, eval_metametric, get_metametric_term_values, has_runtime_metrics
 from stats import pareto_graph, metric_over_time
-from utils import split_by_char_limit, format_date, format_date_relative, wait_until
+from utils import split_by_char_limit, format_date, discord_date, wait_until
 
 load_dotenv()
 
@@ -275,7 +275,7 @@ class BaseTournament(commands.Cog):
     @staticmethod
     def puzzle_deadline_str(round_metadata):
         """Return a string describing how long remains until a puzzle deadline."""
-        return f"Deadline {format_date_relative(round_metadata['end'])}"
+        return f"Deadline {discord_date(round_metadata['end'], relative=True)}"
 
     @staticmethod
     def get_submit_history(round_dir, authors=None, sort_by_date=False, raw_timestamps=False):
@@ -461,7 +461,7 @@ class BaseTournament(commands.Cog):
         announcement = f"**Announcing the {tournament_metadata['name']}**"
         announcement += f"\n{description}"
         announcement += f"\n\n**Metametric**: `{tournament_metadata['metametric']}`"
-        announcement += f"\n**End date**: {format_date(tournament_metadata['end'])}"
+        announcement += f"\n**End date**: {discord_date(tournament_metadata['end'])}"
 
         # Return the announcement in chunks under discord's char limit
         return split_by_char_limit(announcement, 1999)
@@ -563,7 +563,7 @@ class BaseTournament(commands.Cog):
             embed.add_field(name='Max Cycles', value=round_metadata['max_cycles'], inline=True)
 
         # Make the ISO datetime string friendlier-looking (e.g. no +00:00) or indicate puzzle is tournament-long
-        round_end = format_date(round_metadata['end'])
+        round_end = discord_date(round_metadata['end'])
         if round_metadata['end'] == tournament_metadata['end']:
             round_end += " (Tournament Close)"
         embed.add_field(name='Deadline', value=round_end, inline=True)

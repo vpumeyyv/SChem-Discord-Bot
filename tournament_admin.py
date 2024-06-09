@@ -15,7 +15,7 @@ from slugify import slugify
 
 from metric import validate_metric, validate_metametric, has_runtime_metrics, cycle_handler_runtime_metrics
 from tournament_base import PuzzleSubmissionsLock, BaseTournament, ANNOUNCEMENTS_CHANNEL_ID, is_bot_admin, is_tournament_host
-from utils import process_start_end_dates, format_date, split_by_char_limit
+from utils import process_start_end_dates, discord_date, split_by_char_limit
 
 # TODO: Organize things to be able to use the same commands or code to run standalone puzzle challenges unrelated to
 #       any tournament, e.g. puzzle-of-the-week/month, behaving like a standalone tournament round
@@ -270,7 +270,7 @@ class TournamentAdmin(BaseTournament):
                         raise ValueError(f"{k} was already `{v}`, did you mean to update it?")
 
                     if k in ('start', 'end'):
-                        summary_text += f"\n  • {k}: `{format_date(tournament_metadata[k])}` -> `{format_date(v)}`"
+                        summary_text += f"\n  • {k}: `{discord_date(tournament_metadata[k])}` -> `{discord_date(v)}`"
                     elif k == 'metametric':
                         # Put old and new versions on separate lines so it's easier to compare
                         summary_text += (f"\n  • {k}: `{tournament_metadata[k]}`"
@@ -638,7 +638,7 @@ class TournamentAdmin(BaseTournament):
             for k, v in vars(args).items():  # Re-fetch args dict since start/end might be reformatted
                 if v:
                     if k in ('start', 'end'):
-                        summary_text += f"\n  • {k}: `{format_date(round_metadata[k])}` -> `{format_date(v)}`"
+                        summary_text += f"\n  • {k}: `{discord_date(round_metadata[k])}` -> `{discord_date(v)}`"
                     else:
                         summary_text += f"\n  • {k}: `{round_metadata[k]}` -> `{v}`"
                     round_metadata[k] = v
@@ -912,7 +912,7 @@ class TournamentAdmin(BaseTournament):
             if datetime.now(timezone.utc).isoformat() > round_metadata['start']:
                 timeout_seconds = 30
                 warn_msg = await ctx.send(
-                    f"Warning: This round's start date ({format_date(round_metadata['start'])}) has already passed"
+                    f"Warning: This round's start date ({discord_date(round_metadata['start'])}) has already passed"
                     + " and deleting it will delete any player solutions. Maybe you wanted tournament-puzzle-update?"
                     + " Are you sure you wish to continue?"
                     + f"\nReact to this message with ✅ within {timeout_seconds} seconds to delete anyway, ❌ to cancel.")
