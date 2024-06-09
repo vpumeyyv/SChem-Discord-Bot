@@ -51,6 +51,8 @@ METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                     'recycler_pipes': lambda soln: recycler_pipes(soln),
                     'symbol_footprint': lambda soln: symbol_footprint(soln),
                     'max_symbol_footprint': lambda soln: max_symbol_footprint(soln),
+                    # Stupid hack for manual host scoring
+                    'name': lambda soln: name_is_score(soln),
                     # Runtime metrics (requires passing cycle_handler_collect_instr_hit_counts to run())
                     **{k: lambda soln, m=k: soln.custom_data[m] for k in RUNTIME_METRIC_VARS}}
                     # TODO: 'outputs': completed_outputs
@@ -404,6 +406,13 @@ def max_symbol_footprint(soln):
         max_footprint = max(max_footprint, len(symbol_posns))
 
     return max_footprint
+
+
+def name_is_score(soln):
+    try:
+        return float(soln.name.split()[-1])  # Dodge any [author] prefix we may have added
+    except ValueError:
+        return 999_999_999
 
 
 def cycle_handler_runtime_metrics(solution):
