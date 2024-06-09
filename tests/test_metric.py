@@ -142,6 +142,7 @@ class TestGame(unittest.TestCase):
         self.assertEqual(metric.eval_metric(soln, "splits"), 0, "Incorrect splits metric")
         self.assertEqual(metric.eval_metric(soln, "swaps"), 0, "Incorrect swaps metric")
         self.assertEqual(metric.eval_metric(soln, "recycler_pipes"), 0, "Incorrect recycler_pipes metric")
+        self.assertEqual(metric.eval_metric(soln, "max_symbols"), 88, "Incorrect max_symbols metric")
         self.assertEqual(metric.eval_metric(soln, "symbol_footprint"), 47, "Incorrect symbol_footprint metric")
         self.assertEqual(metric.eval_metric(soln, "max_symbol_footprint"), 47, "Incorrect max_symbol_footprint metric")
 
