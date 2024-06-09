@@ -49,6 +49,7 @@ METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                                           + num_instrs_of_type(soln, InstructionType.BOND_MINUS),
                     'pipe_segments': lambda soln: pipe_segments(soln),
                     'recycler_pipes': lambda soln: recycler_pipes(soln),
+                    'max_symbols': lambda soln: max_symbols(soln),
                     'symbol_footprint': lambda soln: symbol_footprint(soln),
                     'max_symbol_footprint': lambda soln: max_symbol_footprint(soln),
                     # Stupid hack for manual host scoring
@@ -380,6 +381,15 @@ def recycler_pipes(soln):
                if isinstance(component, Recycler)
                for pipe in component.in_pipes
                if pipe is not None)
+
+
+def max_symbols(soln):
+    """Return the maximum number of symbols in any reactor."""
+    max_symbols = 0
+    for reactor in soln.reactors:
+        max_symbols = max(max_symbols, sum(len(waldo) for waldo in reactor.waldos))
+
+    return max_symbols
 
 
 def symbol_footprint(soln):
