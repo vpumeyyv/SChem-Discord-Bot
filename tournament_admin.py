@@ -270,7 +270,7 @@ class TournamentAdmin(BaseTournament):
                         raise ValueError(f"{k} was already `{v}`, did you mean to update it?")
 
                     if k in ('start', 'end'):
-                        summary_text += f"\n  • {k}: `{discord_date(tournament_metadata[k])}` -> `{discord_date(v)}`"
+                        summary_text += f"\n  • {k}: {discord_date(tournament_metadata[k])} -> {discord_date(v)}"
                     elif k == 'metametric':
                         # Put old and new versions on separate lines so it's easier to compare
                         summary_text += (f"\n  • {k}: `{tournament_metadata[k]}`"
