@@ -638,7 +638,7 @@ class TournamentAdmin(BaseTournament):
             for k, v in vars(args).items():  # Re-fetch args dict since start/end might be reformatted
                 if v:
                     if k in ('start', 'end'):
-                        summary_text += f"\n  • {k}: `{discord_date(round_metadata[k])}` -> `{discord_date(v)}`"
+                        summary_text += f"\n  • {k}: {discord_date(round_metadata[k])} -> {discord_date(v)}"
                     else:
                         summary_text += f"\n  • {k}: `{round_metadata[k]}` -> `{v}`"
                     round_metadata[k] = v
