@@ -394,9 +394,10 @@ class TournamentAdmin(BaseTournament):
                         pipe_segments: How many pipe segments the solution has.
                         recycler_pipes: Number of pipes attached to a recycler.
                         piped_molecules: How many times a molecule got sent from a reactor into a pipe.
-                        max_symbols: The max symbol count found in any one reactor.
+                        max_symbols: The maximum symbol count of any one reactor.
+                        max_waldo_symbols: The maximum symbol count of any waldo in any reactor.
                         symbol_footprint: Count of reactor cells with any symbol in them.
-                        max_symbol_footprint: The max symbol_footprint found in any one reactor.
+                        max_symbol_footprint: The maximum symbol_footprint of any one reactor.
 
                 Allowed operators/fns: ^ (or **), /, *, +, -, max(), min(),
                                        log() (base 10)
