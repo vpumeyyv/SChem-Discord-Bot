@@ -50,6 +50,7 @@ METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                     'pipe_segments': lambda soln: pipe_segments(soln),
                     'recycler_pipes': lambda soln: recycler_pipes(soln),
                     'max_symbols': lambda soln: max_symbols(soln),
+                    'max_waldo_symbols': lambda soln: max_symbols(soln),
                     'symbol_footprint': lambda soln: symbol_footprint(soln),
                     'max_symbol_footprint': lambda soln: max_symbol_footprint(soln),
                     # Stupid hack for manual host scoring
@@ -388,6 +389,16 @@ def max_symbols(soln):
     max_symbols = 0
     for reactor in soln.reactors:
         max_symbols = max(max_symbols, sum(len(waldo) for waldo in reactor.waldos))
+
+    return max_symbols
+
+
+def max_waldo_symbols(soln):
+    """Return the maximum number of symbols in any waldo."""
+    max_symbols = 0
+    for reactor in soln.reactors:
+        for waldo in reactor.waldos:
+            max_symbols = max(max_symbols, len(waldo))
 
     return max_symbols
 
