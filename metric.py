@@ -50,7 +50,7 @@ METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                     'pipe_segments': lambda soln: pipe_segments(soln),
                     'recycler_pipes': lambda soln: recycler_pipes(soln),
                     'max_symbols': lambda soln: max_symbols(soln),
-                    'max_waldo_symbols': lambda soln: max_symbols(soln),
+                    'max_waldo_symbols': lambda soln: max_waldo_symbols(soln),
                     'symbol_footprint': lambda soln: symbol_footprint(soln),
                     'max_symbol_footprint': lambda soln: max_symbol_footprint(soln),
                     # Stupid hack for manual host scoring
