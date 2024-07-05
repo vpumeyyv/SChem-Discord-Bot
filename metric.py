@@ -53,6 +53,7 @@ METRIC_VAR_TO_FN = {'cycles': lambda soln: soln.expected_score.cycles,
                     'max_waldo_symbols': lambda soln: max_waldo_symbols(soln),
                     'symbol_footprint': lambda soln: symbol_footprint(soln),
                     'max_symbol_footprint': lambda soln: max_symbol_footprint(soln),
+                    'max_waldomiles': lambda soln: max_waldomiles(soln),
                     # Stupid hack for manual host scoring
                     'name': lambda soln: name_is_score(soln),
                     # Runtime metrics (requires passing cycle_handler_collect_instr_hit_counts to run())
@@ -339,6 +340,70 @@ def waldopath(soln):
         total_waldopath += len(covered_posns)
 
     return total_waldopath
+
+
+def max_waldomiles(soln):
+    """2024-specific metric. The maximum score for any waldo in the solution of 0.5 * total entries and exits of the
+    waldo's path from cells in a reactor. Wall-stalls count as an exit as they touch the cell edge.
+    """
+    def is_valid_posn(posn):
+        return 0 <= posn.col < Reactor.NUM_COLS and 0 <= posn.row < Reactor.NUM_ROWS
+
+    max_waldomiles = 0
+    branching_instr_types = {InstructionType.SENSE, InstructionType.FLIP_FLOP}
+    for reactor in soln.reactors:
+        for waldo in reactor.waldos:
+            covered_posn_dirns = set()  # Which posns + directions this waldo has a path entering/exiting each cell for.
+            # Note that this hasn't accounted for any arrow on the start posn yet
+            start_posn, start_dirn = next((posn, cmd.direction) for posn, cmd in waldo.commands.items()
+                                          if cmd.type == InstructionType.START)
+            visited_posn_dirns = set()  # posn + ENTERING direction tuples to catch when we're looping
+            unexplored_branches_stack = [(start_posn, start_dirn)]
+            while unexplored_branches_stack:
+                cur_posn, cur_dirn = unexplored_branches_stack.pop()
+
+                # Count the entering path's cell + direction, except for the starting cell which has no entrypoint.
+                if covered_posn_dirns:
+                    # Note that if the waldo is moving UP, it entered from the cell's bottom side (DOWN).
+                    covered_posn_dirns.add((cur_posn, cur_dirn.opposite()))
+
+                # Arrows update the direction of the current branch but don't create a new one
+                if cur_posn in waldo.arrows:
+                    cur_dirn = waldo.arrows[cur_posn]
+
+                # Check the current position/direction against the visit map. We do this after evaluating the arrow to
+                # reduce excess visits (since the original direction of a waldo never matters to its future path if an
+                # arrow is present, unlike with branching commands)
+                posn_dirn = (cur_posn, cur_dirn)
+                if posn_dirn in visited_posn_dirns:
+                    # We've already explored this cell from the current direction and must have already added any
+                    # branches starting from this cell, so end this branch
+                    continue
+
+                visited_posn_dirns.add(posn_dirn)
+
+                # Add any new branch
+                cmd = waldo.commands[cur_posn] if cur_posn in waldo.commands else None
+                if cmd is not None and cmd.type in branching_instr_types:
+                    # Record the new branch's exit direction from this cell
+                    covered_posn_dirns.add((cur_posn, cmd.direction))
+
+                    next_branch_posn = cur_posn + cmd.direction
+                    if is_valid_posn(next_branch_posn):
+                        unexplored_branches_stack.append((next_branch_posn, cmd.direction))
+
+                # Record the current branch's exit direction from this cell
+                covered_posn_dirns.add((cur_posn, cur_dirn))
+
+                # Put the current branch back on top of the stack
+                next_posn = cur_posn + cur_dirn
+                if is_valid_posn(next_posn):
+                    unexplored_branches_stack.append((next_posn, cur_dirn))
+
+            # Update the new 'most complicated waldo'
+            max_waldomiles = max(max_waldomiles, 0.5 * len(covered_posn_dirns))
+
+    return max_waldomiles
 
 
 def used_bonders(soln):

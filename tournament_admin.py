@@ -394,10 +394,14 @@ class TournamentAdmin(BaseTournament):
                         pipe_segments: How many pipe segments the solution has.
                         recycler_pipes: Number of pipes attached to a recycler.
                         piped_molecules: How many times a molecule got sent from a reactor into a pipe.
-                        max_symbols: The maximum symbol count of any one reactor.
-                        max_waldo_symbols: The maximum symbol count of any waldo in any reactor.
+                        max_symbols: The max symbol count of any one reactor.
+                        max_waldo_symbols: The max symbol count of any waldo in any reactor.
                         symbol_footprint: Count of reactor cells with any symbol in them.
-                        max_symbol_footprint: The maximum symbol_footprint of any one reactor.
+                        max_symbol_footprint: The max symbol_footprint of any one reactor.
+                        max_waldomiles: The max, for any waldo, of its paths' total length, where a cell-width is 1.
+                                        Similarly to waldopath, this includes all visually-traced paths, even unused.
+                                        Unlike waldopath, waldomiles can have up to 2 units of length per cell, in the
+                                        case of branching or criss-crossing paths.
 
                 Allowed operators/fns: ^ (or **), /, *, +, -, max(), min(),
                                        log() (base 10)
