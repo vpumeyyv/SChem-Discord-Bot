@@ -11,7 +11,7 @@ import discord
 from discord.ext import commands
 import schem
 
-from metric import eval_metric, has_runtime_metrics, cycle_handler_runtime_metrics
+from metric import eval_metric, get_metric_and_terms, has_runtime_metrics, cycle_handler_runtime_metrics
 from tournament_base import BaseTournament, is_tournament_host
 
 
@@ -208,11 +208,17 @@ class TournamentSubmit(BaseTournament):
                     # TODO: if metric uses 'outputs' as a var, we should instead catch any run errors (or just
                     #       PauseException, to taste) and pass the post-run solution object to eval_metric regardless
 
-                    # Calculate the solution's metric score
-                    soln_metric_score = eval_metric(solution, metric)
+                    # Calculate the solution's metric score and report the values of any non-standard terms.
+                    soln_metric_score, metric_terms = get_metric_and_terms(solution, metric)
 
-                    await msg.edit(content=f"Successfully validated {soln_descr}, metric score: {round(soln_metric_score, 3)}"
-                                           f"\n{self.puzzle_deadline_str(round_metadata)}.")
+                    special_metrics_descr = ""
+                    for metric_term, value in metric_terms.items():
+                        if metric_term not in ('cycles', 'symbols', 'reactors'):
+                            special_metrics_descr += f"\n`{metric_term}`: `{value}`"
+
+                    await msg.edit(content=f"Successfully validated {soln_descr}, metric score: `{round(soln_metric_score, 3)}`"
+                                           + special_metrics_descr
+                                           + f"\n{self.puzzle_deadline_str(round_metadata)}.")
 
                     # Update solutions.txt
                     # To ensure async-safe file-writing, we may need to read the file(s) twice: the first time to ask
