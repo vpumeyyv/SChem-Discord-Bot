@@ -503,8 +503,9 @@ def name_is_score(soln):
 
 def cycle_handler(metric):
     """If the solution has runtime metrics, return a cycle_handler collecting the necessary ones. Else return None."""
+    metric_terms = ast_vars(ast.parse(metric, mode='eval').body)
     if has_runtime_metrics(metric):
-        return lambda solution, terms=ast_vars(metric): _cycle_handler_runtime_metrics(solution, metric_terms=terms)
+        return lambda solution, terms=metric_terms: _cycle_handler_runtime_metrics(solution, metric_terms=terms)
     else:
         return None
 
