@@ -11,7 +11,7 @@ import discord
 from discord.ext import commands
 import schem
 
-from metric import eval_metric, get_metric_and_terms, has_runtime_metrics, cycle_handler_runtime_metrics
+from metric import eval_metric, get_metric_and_terms, has_runtime_metrics, cycle_handler
 from tournament_base import BaseTournament, is_tournament_host
 
 
@@ -195,7 +195,6 @@ class TournamentSubmit(BaseTournament):
                     # If the metric contains any special vars that require runtime-measurement, pass a corresponding
                     # handler to Solution.validate.
                     metric = round_metadata['metric']
-                    cycle_handler = cycle_handler_runtime_metrics if has_runtime_metrics(metric) else None
 
                     # Call the SChem validator in a thread so the bot isn't blocked
                     # TODO: ProcessPoolExecutor might be more appropriate instead of the default (thread pool), but not
@@ -204,7 +203,7 @@ class TournamentSubmit(BaseTournament):
                     max_cycles = round_metadata['max_cycles'] if 'max_cycles' in round_metadata else self.DEFAULT_MAX_CYCLES
                     hash_states = 1000  # Unfortunate side effect of run_in_executor, can't use keyword args...
                     loop = asyncio.get_event_loop()
-                    await loop.run_in_executor(None, solution.validate, max_cycles, hash_states, cycle_handler)  # Default thread pool executor
+                    await loop.run_in_executor(None, solution.validate, max_cycles, hash_states, cycle_handler(metric))  # Default thread pool executor
                     # TODO: if metric uses 'outputs' as a var, we should instead catch any run errors (or just
                     #       PauseException, to taste) and pass the post-run solution object to eval_metric regardless
 

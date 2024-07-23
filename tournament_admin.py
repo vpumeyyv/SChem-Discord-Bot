@@ -13,7 +13,7 @@ from discord.ext import commands
 import schem
 from slugify import slugify
 
-from metric import validate_metric, validate_metametric, has_runtime_metrics, cycle_handler_runtime_metrics
+from metric import validate_metric, validate_metametric, has_runtime_metrics, cycle_handler
 from tournament_base import PuzzleSubmissionsLock, BaseTournament, ANNOUNCEMENTS_CHANNEL_ID, is_bot_admin, is_tournament_host
 from utils import process_start_end_dates, discord_date, split_by_char_limit
 
@@ -701,14 +701,14 @@ class TournamentAdmin(BaseTournament):
                                 _, author_name, _, _ = schem.Solution.parse_metadata(soln_str)
                                 max_cycles = round_metadata['max_cycles'] if 'max_cycles' in round_metadata else self.DEFAULT_MAX_CYCLES
                                 hash_states = 1000  # Unfortunate side effect of run_in_executor, can't use keyword args...
-                                cycle_handler = cycle_handler_runtime_metrics if _has_runtime_metrics else None
 
                                 # Call the SChem validator in a thread so the bot isn't blocked
                                 # TODO: If/when 'outputs' is a metric term, will need to update this similarly to submit to
                                 #       allow partial solutions in its presence
                                 try:
                                     solution = schem.Solution(soln_str, level=level)
-                                    await loop.run_in_executor(None, solution.validate, max_cycles, hash_states, cycle_handler)
+                                    await loop.run_in_executor(None, solution.validate, max_cycles, hash_states,
+                                                               cycle_handler(round_metadata['metric']))
                                 except Exception:
                                     invalid_soln_authors.add(author_name)
                                     continue

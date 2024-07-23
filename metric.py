@@ -501,72 +501,81 @@ def name_is_score(soln):
         return 999_999_999
 
 
-def cycle_handler_runtime_metrics(solution):
+def cycle_handler(metric):
+    """If the solution has runtime metrics, return a cycle_handler collecting the necessary ones. Else return None."""
+    if has_runtime_metrics(metric):
+        return lambda solution, terms=ast_vars(metric): _cycle_handler_runtime_metrics(solution, metric_terms=terms)
+    else:
+        return None
+
+
+def _cycle_handler_runtime_metrics(solution, metric_terms):
     """A custom handler we can pass to schem to collect the stats from RUNTIME_METRIC_VARS (which require measurement
     during solution runtime). Pass to schem.Solution.run's cycle_handler; runs once per cycle.
     """
     if solution.cycle == 1:
         solution.custom_data = {v: 0 for v in RUNTIME_METRIC_VARS}
 
-    for r, reactor in enumerate(solution.reactors):
-        red_cmd = None  # Helper to check for input stalls
-        for waldo in reactor.waldos:
-            if waldo.position in waldo.arrows:
-                arrow = waldo.arrows[waldo.position]
-                solution.custom_data['arrow_hits'] += 1
+    if any('_hits' in term for term in metric_terms):
+        for r, reactor in enumerate(solution.reactors):
+            red_cmd = None  # Helper to check for input stalls
+            for waldo in reactor.waldos:
+                if waldo.position in waldo.arrows:
+                    arrow = waldo.arrows[waldo.position]
+                    solution.custom_data['arrow_hits'] += 1
 
-            if waldo.position in waldo.commands:
-                cmd = waldo.commands[waldo.position]
-                if waldo.idx == 0:
-                    red_cmd = cmd
+                if waldo.position in waldo.commands:
+                    cmd = waldo.commands[waldo.position]
+                    if waldo.idx == 0:
+                        red_cmd = cmd
 
-                if cmd.type == InstructionType.BOND_PLUS:
-                    solution.custom_data['bond_plus_hits'] += 1
-                elif cmd.type == InstructionType.BOND_MINUS:
-                    solution.custom_data['bond_minus_hits'] += 1
-                elif cmd.type == InstructionType.FUSE:
-                    solution.custom_data['fuse_hits'] += 1
-                elif cmd.type == InstructionType.SPLIT:
-                    solution.custom_data['split_hits'] += 1
-                elif cmd.type == InstructionType.SWAP:
-                    solution.custom_data['swap_hits'] += 1
-                elif cmd.type == InstructionType.ROTATE and not waldo.is_rotating:  # Avoid double-counting
-                    solution.custom_data['rotate_hits'] += 1
-                elif cmd.type == InstructionType.SYNC:
-                    # We'll only count the number of times the waldos actually both synchronized, not the number of
-                    # cycles either waldo was waiting for the other.
-                    if waldo.idx == 0:  # Avoid double-count.
-                        other_waldo = reactor.waldos[1]
-                        if (other_waldo.position in other_waldo.commands
-                            and other_waldo.commands[other_waldo.position] == InstructionType.SYNC):
-                            solution.custom_data['sync_hits'] += 1
+                    if cmd.type == InstructionType.BOND_PLUS:
+                        solution.custom_data['bond_plus_hits'] += 1
+                    elif cmd.type == InstructionType.BOND_MINUS:
+                        solution.custom_data['bond_minus_hits'] += 1
+                    elif cmd.type == InstructionType.FUSE:
+                        solution.custom_data['fuse_hits'] += 1
+                    elif cmd.type == InstructionType.SPLIT:
+                        solution.custom_data['split_hits'] += 1
+                    elif cmd.type == InstructionType.SWAP:
+                        solution.custom_data['swap_hits'] += 1
+                    elif cmd.type == InstructionType.ROTATE and not waldo.is_rotating:  # Avoid double-counting
+                        solution.custom_data['rotate_hits'] += 1
+                    elif cmd.type == InstructionType.SYNC:
+                        # We'll only count the number of times the waldos actually both synchronized, not the number of
+                        # cycles either waldo was waiting for the other.
+                        if waldo.idx == 0:  # Avoid double-count.
+                            other_waldo = reactor.waldos[1]
+                            if (other_waldo.position in other_waldo.commands
+                                and other_waldo.commands[other_waldo.position] == InstructionType.SYNC):
+                                solution.custom_data['sync_hits'] += 1
 
-    # Piped molecules
-    if solution.cycle == 1:
-        solution.custom_data['piped_molecules'] = 0
-        solution.custom_data['_empty_pipes'] = set()
+    if 'piped_molecules' in metric_terms:
+        if solution.cycle == 1:
+            solution.custom_data['piped_molecules'] = 0
+            solution.custom_data['_empty_pipes'] = set()
 
-        # The below code will miss any molecules piped on the last cycle. This would be fine if consistent, but
-        # multiple outputs on the last cycle could save 1 piped_molecule over other solutions.
-        # To avoid this gaming, we'll simply disallow 1-long pipes going to outputs.
-        # Note that this also makes the metric nonsense in research levels, which it is.
-        for output in solution.outputs:
-            if len(output.in_pipe) == 1:
-                raise ValueError("Due to technical limitations, 1-long pipes to outputs are disallowed in piped_molecules metric puzzles.")
+            # The below code will miss any molecules piped on the last cycle. This would be fine if consistent, but
+            # multiple outputs on the last cycle could save 1 piped_molecule over other solutions.
+            # To avoid this gaming, we'll simply disallow 1-long pipes going to outputs.
+            # Note that this also makes the metric nonsense in research levels, which it is.
+            for output in solution.outputs:
+                if len(output.in_pipe) == 1:
+                    raise ValueError("Due to technical limitations, 1-long pipes to outputs are disallowed in piped_molecules metric puzzles.")
 
-    for reactor in solution.reactors:
-        for pipe in reactor.out_pipes:
-            if ((pipe._add_cycles and pipe._add_cycles[0] == solution.cycle - 1)
-                # If the pipe was empty last we checked but it just outputted, it's
-                # a 1-long pipe and we missed its instant input-ouput cycle.
-                or (pipe in solution.custom_data['_empty_pipes']
-                    and pipe._last_pop_cycle == solution.cycle - 1)):
-                solution.custom_data['piped_molecules'] += 1
+        for reactor in solution.reactors:
+            for pipe in reactor.out_pipes:
+                if ((pipe._add_cycles and pipe._add_cycles[0] == solution.cycle - 1)
+                    # If the pipe was empty last we checked but it just outputted, it's
+                    # a 1-long pipe and we missed its instant input-ouput cycle.
+                    or (pipe in solution.custom_data['_empty_pipes']
+                        and pipe._last_pop_cycle == solution.cycle - 1)):
+                    solution.custom_data['piped_molecules'] += 1
 
-            # To detect 1-long pipe same-cycle in-outs without double-counting,
-            # track whether the pipe was empty last cycle
-            if len(pipe) == 1:
-                if len(pipe._molecules) == 0:
-                    solution.custom_data['_empty_pipes'].add(pipe)
-                else:
-                    solution.custom_data['_empty_pipes'].discard(pipe)
+                # To detect 1-long pipe same-cycle in-outs without double-counting,
+                # track whether the pipe was empty last cycle
+                if len(pipe) == 1:
+                    if len(pipe._molecules) == 0:
+                        solution.custom_data['_empty_pipes'].add(pipe)
+                    else:
+                        solution.custom_data['_empty_pipes'].discard(pipe)
