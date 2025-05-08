@@ -22,7 +22,7 @@ class TournamentInfo(BaseTournament):
         """Info on the tournament or specified round/puzzle.
 
         round_or_puzzle_name: (Case-insensitive) Return links to the matching
-                              puzzle's announcement (/ results if available) posts.
+                              puzzle's announcement (/ results if available) posts, and video (if available).
                               A string like r10 will also match "Round 10" as a shortcut.
                               If not specified, show all puzzle announcement links
                               and current tournament standings.
@@ -44,6 +44,8 @@ class TournamentInfo(BaseTournament):
                                          + f" [Announcement]({round_metadata['start_post']})"
                     if 'end_post' in round_metadata:
                         embed.description += f" | [Results]({round_metadata['end_post']})"
+                        if 'video' in round_metadata:
+                            embed.description += f" | [Video]({round_metadata['video']})"
                     else:
                         embed.description += f" {self.puzzle_deadline_str(round_metadata)}"
                 elif is_host:
@@ -73,6 +75,8 @@ class TournamentInfo(BaseTournament):
 
             if 'end_post' in round_metadata:
                 embed.description += f" | [Results]({round_metadata['end_post']})"
+                if 'video' in round_metadata:
+                            embed.description += f" | [Video]({round_metadata['video']})"
             else:
                 embed.description += f" {self.puzzle_deadline_str(round_metadata)}"
         else:

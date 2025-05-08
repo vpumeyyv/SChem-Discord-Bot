@@ -531,6 +531,7 @@ class TournamentAdmin(BaseTournament):
                        field1=value "field2=value with spaces"
                        Valid fields (same as tournament-add-puzzle):
                            round_name, metric, points, start, end
+                       Additionally use "video=URL" to add a video after a round ended.
                        Double-quotes within a field's value should be avoided
                        as they will interfere with arg-parsing.
                        Unspecified fields will not be modified.
@@ -552,9 +553,6 @@ class TournamentAdmin(BaseTournament):
             round_metadata = tournament_metadata['rounds'][puzzle_name]
             round_dir = tournament_dir / round_metadata['dir']
 
-            if 'end_post' in round_metadata:
-                raise Exception("Cannot edit closed puzzle.")
-
             parser = argparse.ArgumentParser(exit_on_error=False)
             parser.add_argument('--round_name')
             parser.add_argument('--metric')
@@ -572,7 +570,42 @@ class TournamentAdmin(BaseTournament):
 
             args_dict = vars(args)
             updated_fields = set(k for k, v in args_dict.items() if v)
+                
+            if 'end_post' in round_metadata:
+                #The only field that can be updated for a round after it ended is its video 
+                assert args.video, \
+                    "The round is closed, the only field that can be updated for it is video" 
+                for k, v in args_dict.items():
+                    assert k == 'video' or v == None, "Expected only video"
+                assert len(ctx.message.attachments) == 0, "Expected no attachments"
+                
+                if 'video' in round_metadata:
+                    assert args.video != round_metadata['video'], \
+                        "The video URL didn't change, did you mean to update it?"
+                
+                # Update the tournament metadata
+                round_metadata['video'] = args.video
+                del tournament_metadata['rounds'][puzzle_name]
+                tournament_metadata['rounds'][puzzle_name] = round_metadata
 
+                with open(tournament_dir / 'tournament_metadata.json', 'w', encoding='utf-8') as f:
+                    json.dump(tournament_metadata, f, ensure_ascii=False, indent=4)
+
+                # Prepare a text post for the new video
+                # TODO: @tournament or some such
+                summary_text = (f"**The tournament host has uploaded a video for {round_metadata['round_name']}, {puzzle_name}:**"
+                                +f"\n{args.video}")
+                
+                channel = self.bot.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
+                await channel.send(summary_text)
+
+                await ctx.send(f"Updated video for {round_metadata['round_name']}, {puzzle_name}")
+
+                return
+                
+            else:
+                assert args.video not in args, "can't add a video to an open round"
+            
             # Check attachments
             assert len(ctx.message.attachments) <= 2, "Too many attachments!"
 
