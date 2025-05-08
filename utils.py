@@ -31,6 +31,12 @@ def split_by_char_limit(s, limit):
 
 def parse_datetime_str(s):
     """Parse and check validity of given ISO date string then return as a UTC Datetime (converting as needed)."""
+    # Shortcuts for doing stuff right now
+    if s.lower() == "now":
+        return datetime.now(timezone.utc) + timedelta(seconds=360)
+    elif s.lower() == "now!":
+        return datetime.now(timezone.utc) + timedelta(seconds=1)
+    
     dt = datetime.fromisoformat(s.rstrip('Z'))  # For some reason isoformat doesn't like Z (Zulu time) suffix
 
     # If timezone unspecified, assume UTC, else convert to UTC

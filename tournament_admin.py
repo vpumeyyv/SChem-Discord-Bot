@@ -89,6 +89,7 @@ class TournamentAdmin(BaseTournament):
                after which puzzle rounds may start. ISO format, default UTC.
                E.g. the following are all equivalent: 2000-01-31, "2000-01-31 00:00",
                     2000-01-30T19:00:00-05:00
+               Supports 'now' for in 5 minutes, and 'now!' for immediately.
         end: The datetime on which the bot will announce the tournament results,
              after closing and tallying the results of any still-open puzzles.
              Same format as `start`.
@@ -415,6 +416,7 @@ class TournamentAdmin(BaseTournament):
                ISO format, default UTC.
                E.g. the following are all equivalent: 2000-01-31, "2000-01-31 00:00",
                     2000-01-30T19:00:00-05:00
+               Supports 'now' for in 5 minutes, and 'now!' for immediately.
         end: The datetime on which submissions will close and the results will be
              announced. Same format as `start`.
              If excluded, puzzle is open until the tournament is ended (e.g. the
